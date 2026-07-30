@@ -1,0 +1,10 @@
+# 构建产物与缓存
+/work/
+/outputs/
+
+# Swift Package Manager
+/.build/
+/.swiftpm/
+
+# macOS
+.DS_Store
