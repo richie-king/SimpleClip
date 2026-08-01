@@ -488,7 +488,9 @@ final class HistoryWindowController: NSWindowController,
         // 回车后总是关闭窗口，并回到刚才使用的应用。
         hide()
 
-        guard requestAccessibilityIfNeeded() else { return }
+        // 自动粘贴是可选能力。未授权时只保留写回系统剪贴板的结果，
+        // 不要在每次回车时调用带 prompt 的 API 弹出系统权限窗口。
+        guard AXIsProcessTrusted() else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
             Self.pasteWhenCursorAvailable(attemptsLeft: 3)
         }
@@ -588,11 +590,4 @@ final class HistoryWindowController: NSWindowController,
         keyUp?.post(tap: .cghidEventTap)
     }
 
-    private func requestAccessibilityIfNeeded() -> Bool {
-        if AXIsProcessTrusted() { return true }
-        let options = [
-            kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
-        ] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
-    }
 }
