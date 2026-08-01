@@ -32,9 +32,10 @@ chmod +x scripts/build-app.sh
 脚本使用系统自带的 Swift 编译器，不需要安装 Xcode 或第三方依赖，并会生成
 同时支持 Apple 芯片与 Intel Mac 的通用应用。图标已经生成好放在
 `Resources/AppIcon.icns`，只有改图形时才需要跑 `./scripts/make-icon.sh`。
-完成后双击 `outputs/ClipTiny.app`。Enter 自动粘贴需要在“系统设置 → 隐私与安全性
-→ 辅助功能”中允许 ClipTiny；若未授权，所选记录仍会复制到系统剪贴板，可手动按
-`⌘V` 粘贴，应用不会主动弹出权限窗口。
+完成后双击 `outputs/ClipTiny.app`。首次用 Enter 自动粘贴时，macOS 可能请求一次
+“辅助功能”权限；允许后即可自动粘贴。若拒绝，所选记录仍会复制到系统剪贴板，
+可手动按 `⌘V` 粘贴，应用不会重复弹出权限窗口。也可以在“系统设置 → 隐私与安全性
+→ 辅助功能”中手动允许 ClipTiny。
 
 如需开机启动，可在“系统设置 → 通用 → 登录项”中添加 ClipTiny。
 

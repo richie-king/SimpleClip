@@ -38,6 +38,7 @@ final class HistoryWindowController: NSWindowController,
     NSSearchFieldDelegate {
 
     private static let windowFrameKey = "HistoryWindowFrame"
+    private static let accessibilityPromptedKey = "AccessibilityPermissionPrompted"
     private static let minimumSize = NSSize(width: 760, height: 440)
 
     private let store: HistoryStore
@@ -488,25 +489,40 @@ final class HistoryWindowController: NSWindowController,
         // 回车后总是关闭窗口，并回到刚才使用的应用。
         hide()
 
-        // 自动粘贴是可选能力。未授权时只保留写回系统剪贴板的结果，
-        // 不要在每次回车时调用带 prompt 的 API 弹出系统权限窗口。
-        guard AXIsProcessTrusted() else { return }
+        // 自动粘贴需要辅助功能权限。只在首次需要时提示一次，避免每次回车都弹窗。
+        guard accessibilityAutomationAllowed() else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
-            Self.pasteWhenCursorAvailable(attemptsLeft: 3)
+            Self.pasteWhenCursorAvailable(attemptsLeft: 10)
         }
     }
 
     /// 光标停在可输入的文本里才自动粘贴，否则内容留在系统剪贴板，
     /// 等用户自己按 ⌘V。目标应用刚被激活时焦点可能还没就绪，所以多试几次。
     private static func pasteWhenCursorAvailable(attemptsLeft: Int) {
-        guard focusedElementAcceptsText() else {
-            guard attemptsLeft > 1 else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                pasteWhenCursorAvailable(attemptsLeft: attemptsLeft - 1)
+        let status = focusedElementTextStatus()
+        switch status {
+        case .textInput:
+            postPasteShortcut()
+        case .nonText, .unavailable:
+            // 一些浏览器网页输入框不会暴露 AXTextField，但正常的 ⌘V 仍然可用。
+            // 等目标应用回到前台后，在最后一次尝试中发送一次快捷键作为兜底。
+            guard attemptsLeft > 1 else {
+                let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                if case .unavailable = status,
+                   frontmostPID != ProcessInfo.processInfo.processIdentifier {
+                    postPasteShortcut()
+                }
+                return
             }
-            return
+            retryPaste(attemptsLeft: attemptsLeft)
         }
-        postPasteShortcut()
+    }
+
+    private static func retryPaste(attemptsLeft: Int) {
+        guard attemptsLeft > 1 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            pasteWhenCursorAvailable(attemptsLeft: attemptsLeft - 1)
+        }
     }
 
     private func writeToPasteboard(_ item: HistoryItem) -> Bool {
@@ -527,8 +543,14 @@ final class HistoryWindowController: NSWindowController,
         return true
     }
 
-    /// 当前聚焦的控件是否有文本光标。取不到就当作没有，只留在剪贴板里。
-    private static func focusedElementAcceptsText() -> Bool {
+    private enum FocusedElementTextStatus {
+        case textInput
+        case nonText
+        case unavailable
+    }
+
+    /// 判断当前聚焦控件是否明确是文本输入；部分应用不会完整暴露 AX 信息。
+    private static func focusedElementTextStatus() -> FocusedElementTextStatus {
         var focused: CFTypeRef?
         guard
             AXUIElementCopyAttributeValue(
@@ -538,7 +560,7 @@ final class HistoryWindowController: NSWindowController,
             ) == .success,
             let value = focused,
             CFGetTypeID(value) == AXUIElementGetTypeID()
-        else { return false }
+        else { return .unavailable }
 
         let element = value as! AXUIElement
 
@@ -548,7 +570,7 @@ final class HistoryWindowController: NSWindowController,
             kAXValueAttribute as CFString,
             &settable
         ) == .success, settable.boolValue {
-            return true
+            return .textInput
         }
 
         var selectedRange: CFTypeRef?
@@ -557,7 +579,7 @@ final class HistoryWindowController: NSWindowController,
             kAXSelectedTextRangeAttribute as CFString,
             &selectedRange
         ) == .success {
-            return true
+            return .textInput
         }
 
         var role: CFTypeRef?
@@ -568,26 +590,51 @@ final class HistoryWindowController: NSWindowController,
                 &role
             ) == .success,
             let name = role as? String
-        else { return false }
-        return [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(name)
+        else { return .unavailable }
+        if [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(name) {
+            return .textInput
+        }
+
+        let nonTextRoles: Set<String> = [
+            "AXButton", "AXCheckBox", "AXRadioButton", "AXMenuItem",
+            "AXStaticText", "AXImage", "AXList", "AXTable", "AXOutline",
+            "AXBrowser", "AXScrollArea", "AXToolbar", "AXWindow", "AXSheet",
+            "AXDialog", "AXDesktop", "AXSplitGroup"
+        ]
+        return nonTextRoles.contains(name) ? .nonText : .unavailable
     }
 
     private static func postPasteShortcut() {
-        let source = CGEventSource(stateID: .hidSystemState)
-        let keyDown = CGEvent(
+        // ClipTiny runs in the user's GUI session, so use the combined session
+        // state rather than the HID-system state used by drivers and daemons.
+        guard let source = CGEventSource(stateID: .combinedSessionState),
+              let keyDown = CGEvent(
             keyboardEventSource: source,
             virtualKey: 9,
             keyDown: true
-        )
-        let keyUp = CGEvent(
+        ),
+              let keyUp = CGEvent(
             keyboardEventSource: source,
             virtualKey: 9,
             keyDown: false
-        )
-        keyDown?.flags = .maskCommand
-        keyUp?.flags = .maskCommand
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
+        ) else { return }
+
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        keyDown.post(tap: .cgSessionEventTap)
+        keyUp.post(tap: .cgSessionEventTap)
     }
 
+    private func accessibilityAutomationAllowed() -> Bool {
+        if AXIsProcessTrusted() { return true }
+        guard !UserDefaults.standard.bool(forKey: Self.accessibilityPromptedKey) else {
+            return false
+        }
+
+        UserDefaults.standard.set(true, forKey: Self.accessibilityPromptedKey)
+        let options = [
+            kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
+        ] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
 }
