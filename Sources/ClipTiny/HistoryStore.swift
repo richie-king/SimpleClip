@@ -93,17 +93,29 @@ extension HistoryItem {
 }
 
 final class HistoryStore {
+    static let availableMaximumCounts = [50, 100, 200, 500]
+
+    private static let maximumCountDefaultsKey = "MaximumHistoryItemCount"
+    private static let defaultMaximumCount = 100
+
     private(set) var items: [HistoryItem] = []
     var onChange: (() -> Void)?
 
     let images: ImageVault
+    private(set) var maximumCount: Int
 
-    private let maximumCount = 100
     private let maximumImageBytes = 20 * 1024 * 1024
     private let fileURL: URL
     private let encryptionKey: SymmetricKey?
 
     init() {
+        let savedMaximumCount = UserDefaults.standard.integer(
+            forKey: Self.maximumCountDefaultsKey
+        )
+        maximumCount = Self.availableMaximumCounts.contains(savedMaximumCount)
+            ? savedMaximumCount
+            : Self.defaultMaximumCount
+
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -133,6 +145,17 @@ final class HistoryStore {
             key: key
         )
         load()
+    }
+
+    func setMaximumCount(_ count: Int) {
+        guard Self.availableMaximumCounts.contains(count) else { return }
+        guard count != maximumCount else { return }
+
+        maximumCount = count
+        UserDefaults.standard.set(count, forKey: Self.maximumCountDefaultsKey)
+        trim()
+        save()
+        onChange?()
     }
 
     func add(_ text: String) {

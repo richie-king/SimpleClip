@@ -6,10 +6,20 @@ final class ShortcutPanel: NSPanel {
     var dismiss: (() -> Void)?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-           event.charactersIgnoringModifiers?.lowercased() == "f" {
-            focusSearch?()
-            return true
+        let shortcutModifiers = event.modifierFlags.intersection([
+            .command, .option, .control, .shift
+        ])
+        if shortcutModifiers == .command {
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case "f":
+                focusSearch?()
+                return true
+            case "w":
+                dismiss?()
+                return true
+            default:
+                break
+            }
         }
         return super.performKeyEquivalent(with: event)
     }
@@ -197,7 +207,9 @@ final class HistoryWindowController: NSWindowController,
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
 
-        let hint = NSTextField(labelWithString: "↑↓ 选择    ↩ 粘贴    ⌘F 搜索    esc 关闭")
+        let hint = NSTextField(
+            labelWithString: "↑↓ 选择    ↩ 粘贴    ⌘F 搜索    ⌘W / esc 关闭"
+        )
         hint.font = .systemFont(ofSize: 12)
         hint.textColor = .tertiaryLabelColor
 

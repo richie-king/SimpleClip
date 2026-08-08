@@ -50,6 +50,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         clear.target = self
         menu.addItem(clear)
+
+        let maximumCount = NSMenuItem(title: "保留条目数", action: nil, keyEquivalent: "")
+        let maximumCountMenu = NSMenu()
+        for count in HistoryStore.availableMaximumCounts {
+            let item = NSMenuItem(
+                title: "\(count) 条",
+                action: #selector(setMaximumCount(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = count
+            item.state = count == store.maximumCount ? .on : .off
+            maximumCountMenu.addItem(item)
+        }
+        maximumCount.submenu = maximumCountMenu
+        menu.addItem(maximumCount)
         menu.addItem(.separator())
 
         let quit = NSMenuItem(
@@ -68,6 +84,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func clearHistory() {
         store.clear()
+    }
+
+    @objc private func setMaximumCount(_ sender: NSMenuItem) {
+        store.setMaximumCount(sender.tag)
+        sender.menu?.items.forEach {
+            $0.state = $0.tag == store.maximumCount ? .on : .off
+        }
     }
 
     @objc private func quit() {
