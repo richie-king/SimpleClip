@@ -1,7 +1,18 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let store = HistoryStore()
+    private let store: HistoryStore
+    private let defaults: UserDefaults
+
+    override convenience init() {
+        self.init(store: HistoryStore(), defaults: .standard)
+    }
+
+    init(store: HistoryStore, defaults: UserDefaults) {
+        self.store = store
+        self.defaults = defaults
+        super.init()
+    }
     private var monitor: ClipboardMonitor!
     private var hotKey: GlobalHotKey!
     private var historyWindow: HistoryWindowController!
@@ -10,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
-        historyWindow = HistoryWindowController(store: store)
+        historyWindow = HistoryWindowController(store: store, defaults: defaults)
         monitor = ClipboardMonitor(store: store)
         historyWindow.onPasteboardWrite = { [weak self] changeCount in
             self?.monitor.acknowledgeOwnWrite(changeCount: changeCount)

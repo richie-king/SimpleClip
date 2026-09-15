@@ -3,11 +3,12 @@ import PackageDescription
 
 let package = Package(
     name: "ClipTiny",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS("26.0")],
     targets: [
         .executableTarget(
             name: "ClipTiny",
             path: "Sources/ClipTiny"
-        )
+        ),
+        .testTarget(name: "ClipTinyTests", dependencies: ["ClipTiny"])
     ]
 )

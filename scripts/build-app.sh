@@ -6,12 +6,9 @@ OUTPUT_DIR="$ROOT_DIR/outputs"
 APP_DIR="$OUTPUT_DIR/ClipTiny.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 BUILD_DIR="$ROOT_DIR/work/build"
-SDK_DIR="/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk"
+SDK_DIR="$(xcrun --sdk macosx --show-sdk-path)"
 
 cd "$ROOT_DIR"
-if [[ ! -d "$SDK_DIR" ]]; then
-  SDK_DIR="$(xcrun --sdk macosx --show-sdk-path)"
-fi
 
 mkdir -p "$BUILD_DIR" "$ROOT_DIR/work/clang-cache-x86_64" "$ROOT_DIR/work/clang-cache-arm64"
 mkdir -p "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources"
@@ -20,7 +17,7 @@ for ARCH in x86_64 arm64; do
   CLANG_MODULE_CACHE_PATH="$ROOT_DIR/work/clang-cache-$ARCH" \
     swiftc -O -whole-module-optimization \
     -sdk "$SDK_DIR" \
-    -target "$ARCH-apple-macosx13.0" \
+    -target "$ARCH-apple-macosx26.0" \
     Sources/ClipTiny/*.swift \
     -o "$BUILD_DIR/ClipTiny-$ARCH"
 done

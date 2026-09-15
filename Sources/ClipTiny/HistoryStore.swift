@@ -108,30 +108,13 @@ final class HistoryStore {
     private let fileURL: URL
     private let encryptionKey: SymmetricKey?
 
-    init() {
-        let savedMaximumCount = UserDefaults.standard.integer(
-            forKey: Self.maximumCountDefaultsKey
-        )
-        maximumCount = Self.availableMaximumCounts.contains(savedMaximumCount)
-            ? savedMaximumCount
-            : Self.defaultMaximumCount
+    private let defaults: UserDefaults
 
+    convenience init() {
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first!.appendingPathComponent("ClipTiny", isDirectory: true)
-        try? FileManager.default.createDirectory(
-            at: support,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: support.path
-        )
-
-        fileURL = support.appendingPathComponent("history.enc")
-
         var key: SymmetricKey?
         do {
             key = try KeychainKeyStore.loadOrCreateKey()
@@ -139,9 +122,29 @@ final class HistoryStore {
             key = nil
             NSLog("ClipTiny 无法访问加密密钥：%@", error.localizedDescription)
         }
+        self.init(directory: support, key: key, defaults: .standard)
+    }
+
+    /// 显式提供存储依赖，让测试不访问用户历史、偏好设置和钥匙串。
+    init(directory: URL, key: SymmetricKey?, defaults: UserDefaults) {
+        self.defaults = defaults
+        let savedMaximumCount = defaults.integer(forKey: Self.maximumCountDefaultsKey)
+        maximumCount = Self.availableMaximumCounts.contains(savedMaximumCount)
+            ? savedMaximumCount
+            : Self.defaultMaximumCount
+        try? FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: directory.path
+        )
+        fileURL = directory.appendingPathComponent("history.enc")
         encryptionKey = key
         images = ImageVault(
-            directory: support.appendingPathComponent("images", isDirectory: true),
+            directory: directory.appendingPathComponent("images", isDirectory: true),
             key: key
         )
         load()
@@ -152,7 +155,7 @@ final class HistoryStore {
         guard count != maximumCount else { return }
 
         maximumCount = count
-        UserDefaults.standard.set(count, forKey: Self.maximumCountDefaultsKey)
+        defaults.set(count, forKey: Self.maximumCountDefaultsKey)
         trim()
         save()
         onChange?()

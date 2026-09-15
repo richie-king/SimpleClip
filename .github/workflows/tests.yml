@@ -1,0 +1,26 @@
+name: 自动化测试
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: 显示工具链
+        run: |
+          swift --version
+          xcrun --show-sdk-version
+      - name: 运行 Swift Testing
+        run: ./scripts/test.sh
