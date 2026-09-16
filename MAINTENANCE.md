@@ -2,20 +2,29 @@
 
 ## 1. 产品边界
 
-ClipTiny 是一个管理文本和图片的原生 macOS 菜单栏应用：
+ClipTiny 是一个管理文本、图片与文件的原生 macOS 菜单栏应用：
 
-- 后台轮询系统剪贴板，文本和图片合计保留条目数可配置为 50、100、200 或 500。
+- 后台轮询系统剪贴板（具备休眠暂停与根据操作空闲度自适应退避节能），文本、图片和文件合计保留条目数可配置为 50、100、200 或 500。
 - `⌘⇧V` 是窗口开关：隐藏时打开，显示时关闭。
-- `⌘F` 聚焦搜索框。
-- `↑ / ↓` 选择记录，右侧预览区同步显示完整文本或整张图片。
+- `⌘F` 聚焦搜索框，支持多词 AND 匹配与中文拼音首字母/全拼搜索。
+- `↑ / ↓` 选择记录，`PageUp / PageDown` 快速翻页；右侧预览区同步显示完整文本、图片、色卡或文件卡片。
+- `Tab` 在搜索框与历史列表之间循环切换。
 - `Enter` 将记录写回剪贴板、关闭窗口，并在有文本光标时粘贴到之前的应用。
-- `Esc` 隐藏窗口。
+- `⌥Enter` 纯文本格式清理粘贴（去除多余首尾空白与连续空行）。
+- `⌘P` 切换记录置顶状态（置顶项常驻最前，不被容量限制裁剪）。
+- `⌘⌫` 单条记录物理删除。
+- `⌘R` 在访达中定位高亮文件记录。
+- `⌘C` 将当前选中记录写回剪贴板并关闭窗口，不触发自动粘贴。
+- `⌘1 / ⌘2 / ⌘3` 快速切换“全部”、“文本”、“图片”分类。
+- `⌘O` 遇到链接记录时在默认浏览器中打开。
+- `Esc` 关闭窗口；若搜索框中含有已输入内容，则按一次优先清空搜索词，再次按键关闭窗口。
 - `⌘W` 隐藏窗口。
-- 窗口可以调整大小，关闭或隐藏时保存位置和大小；若显示器布局变化导致旧位置
-  不可见，则居中显示。
+- 窗口支持调整大小与三种唤起位置偏好（居中/记忆位置、跟随鼠标指针、跟随输入光标）。
+- 常见敏感凭证（GitHub Token, OpenAI Key, AWS Key, 私钥等）智能脱敏展示，并提供明文切换查看。
+- 原生支持应用黑名单过滤与开机自启动配置（`SMAppService`）。
 - 无网络请求、无第三方依赖、无 Dock 图标。
 
-当前最低系统版本为 macOS 13，支持 Apple 芯片和 Intel Mac。
+当前最低系统版本为 macOS 26，支持 Apple 芯片和 Intel Mac。
 
 ## 2. 交互状态与流程
 
@@ -38,7 +47,10 @@ ClipTiny 是一个管理文本和图片的原生 macOS 菜单栏应用：
 1. 记录当前最前方应用，供稍后恢复和粘贴。
 2. 刷新列表与搜索结果。
 3. 激活 ClipTiny 并显示浮动窗口。
-4. 有记录时选中第一条并聚焦列表；无记录时聚焦搜索框。
+4. 有记录时选中第一条，焦点始终放在搜索框，打开后可直接输入。
+
+窗口采用紧凑的 Spotlight 布局：顶部搜索，左侧历史列表，右侧预览卡片，
+底部快捷键提示和粘贴按钮。整体使用系统液态玻璃（`NSGlassEffectView`，带底层完全透明优化），标题栏按钮收起，右上角提供物理键帽质感的 `esc` 关闭按钮。
 
 窗口位置只在控制器初始化时恢复，后续打开不会重新居中。恢复时会把宽高抬到
 `HistoryWindowController.minimumSize`，避免预览区被挤没。
@@ -52,39 +64,42 @@ ClipTiny 是一个管理文本和图片的原生 macOS 菜单栏应用：
 3. 清空本次搜索词并恢复完整列表。
 4. 重新激活打开 ClipTiny 前使用的应用。
 
-窗口左上角关闭按钮通过 `windowWillClose` 保存位置。`Esc` 由
-`ShortcutPanel.cancelOperation` 转发到 `hide()`；`⌘W` 由
+右上角 `esc` 按钮调用 `hide()`。`Esc` 由搜索框命令代理或
+`ShortcutPanel.cancelOperation` 转发：搜索框有文字时优先清空搜索词，再次按键调用 `hide()`；`⌘W` 由
 `ShortcutPanel.performKeyEquivalent` 捕获后调用同一个 `hide()`。
 
 ### 搜索
 
 `ShortcutPanel.performKeyEquivalent` 捕获 `⌘F`，并让搜索框成为第一响应者。
-搜索使用 `localizedCaseInsensitiveContains`，不区分大小写，并保留第一项选择。
+搜索使用 `localizedCaseInsensitiveContains`，不区分大小写。优先保留仍匹配的选中项，
+否则选择第一项。在搜索框中按上下键切换记录、`PageUp/Down` 翻页、回车粘贴，输入法组词期间由系统处理按键。
 图片记录用一句描述（例如 `图片 2560 × 1440`）参与搜索。
+搜索无匹配时，空状态图标自动切换为放大镜提示。
 
 `refresh()` 会记住选中记录的 `id` 并在 `reloadData()` 之后按 `id` 恢复选择，
 这样窗口开着时复制了新内容，用户正在看的那条不会被顶掉。
 
 ### 预览
 
-窗口右侧是常驻预览区，跟随列表选中项刷新：
+窗口右侧是常驻预览卡片，顶部水平基线与左侧分类栏完全平齐，跟随列表选中项刷新：
 
-- 文本记录：只读的 `NSTextView`，可滚动、可选中复制。
-- 图片记录：解密原图后按比例缩小显示，不放大小图。
+- 文本记录：只读 `NSTextView`，常规文本使用系统排版，代码/JSON/Shell 自动使用等宽字体并展示行数与字符数。
+- 颜色记录：识别 `#RRGGBB`、`#RGB` 等十六进制颜色，展示真实大色块色板与 RGB/HEX 格式色值。
+- 链接记录：识别 HTTP(S) URL，展示外链标识并提供“在浏览器中打开 (⌘O)”快捷操作。
+- 图片记录：解密原图后按比例缩小显示，预览框添加轻量圆角微边框，不放大小图。
 - 图片文件缺失时显示“图片文件已丢失，无法预览”，不影响其他记录。
 
-列表每行左侧是 40pt 图标：图片记录用缩略图，文本记录用系统符号。
+列表行高为 56pt，支持鼠标滑过平滑悬停过渡：
+- 图片项使用 32x32 铺满缩略图并带 0.5pt 描边；
+- 颜色项在图标框直接呈现对应色彩色块；
+- 链接、代码与纯文本各自呈现专属语义符号与微背景色。
+主行显示正文第一行（清理前置空格缩进），副行显示下一行摘要或类型与大小，完整内容保留在预览中。
 
 ### 时间戳
 
-每条记录都显示 `createdAt` 的绝对时间：
-
-- 列表：`2026-07-30 19:17 · 大小`，精确到分钟。
-- 预览区：`2026-07-30 19:17:02 · 3 分钟前 · 大小`，精确到秒，后面跟相对时间。
-
-格式串固定为 `yyyy-MM-dd HH:mm`，用 `en_US_POSIX` 区域，避免跟随系统偏好变成
-12 小时制。相对时间在一分钟以内显示“刚刚”，否则 `RelativeDateTimeFormatter`
-会把刚复制的记录说成“0秒后”。
+列表右侧在一分钟内显示“刚刚”，当天记录显示 `HH:mm`，更早的记录显示 `MM/dd`。
+预览顶部显示相对时间与大小，底部显示 `yyyy-MM-dd HH:mm:ss` 完整时间；
+列表悬停提示也包含完整时间。固定时间格式使用 `en_US_POSIX` 区域。
 
 ### 选择与粘贴
 
@@ -205,7 +220,12 @@ ClipTiny/
 │   ├── KeychainKeyStore.swift
 │   ├── HistoryStore.swift
 │   ├── ImageVault.swift
-│   └── HistoryWindowController.swift
+│   ├── HistoryWindowController.swift
+│   ├── HistoryRowView.swift
+│   ├── HistoryPreviewView.swift
+│   ├── PasteService.swift
+│   ├── PinyinHelper.swift
+│   └── SensitiveMasker.swift
 ├── scripts/
 │   ├── build-app.sh
 │   ├── make-icon.sh
@@ -217,21 +237,20 @@ ClipTiny/
 职责：
 
 - `main.swift`：创建并运行 `NSApplication`。
-- `AppDelegate.swift`：组装组件、菜单栏图标、菜单命令和应用生命周期，
-  并把窗口的剪贴板写入事件转给监听器。
-- `ClipboardMonitor.swift`：每 0.35 秒检查 `changeCount`，有变化时读取图片或
-  文本；`acknowledgeOwnWrite(changeCount:)` 用来跳过应用自己的写入。
-- `ClipboardImage.swift`：判断该按图片还是文字处理，把剪贴板图片转成 PNG 和
-  缩略图，并算出去重用的摘要。
+- `AppDelegate.swift`：组装组件、菜单栏图标、菜单命令、开机自启、排除应用及偏好配置。
+- `ClipboardMonitor.swift`：后台轮询系统剪贴板，支持休眠暂停、自适应退避节能、后台异步图片转码、文件捕获与应用黑名单。
+- `ClipboardImage.swift`：判断图片与文本优先级，提供快速数据读取与后台 PNG 缩略图转码。
 - `GlobalHotKey.swift`：注册和释放全局 `⌘⇧V`。
 - `KeychainKeyStore.swift`：创建或读取仅限本机的历史加密密钥。
-- `HistoryStore.swift`：数据模型、去重、可配置条目上限、AES-GCM 加解密、原子写入
-  与清空。
+- `HistoryStore.swift`：数据模型（文本/图片/文件/置顶）、去重、置顶优先裁剪、AES-GCM 加密、防抖异步写盘与优雅退出同步 flush。
 - `ImageVault.swift`：图片文件的加密读写、缩略图缓存、删除与孤儿清理。
-- `HistoryWindowController.swift`：窗口、列表、搜索、预览区、位置记忆、
-  文本光标检测和自动粘贴。
-- `Info.plist`：应用标识、版本、最低系统版本、`CFBundleIconFile` 以及
-  `LSUIElement`。
+- `HistoryWindowController.swift`：Spotlight 浮动窗口生命周期、快捷键派发、列表数据源与多种弹出定位策略。
+- `HistoryRowView.swift`：单元格行视图，支持置顶图标、文件图标与敏感信息脱敏摘要。
+- `HistoryPreviewView.swift`：解耦的右侧预览卡片视图，展示文本、代码、色板、大图及文件元数据，并提供敏感内容明文切换开关。
+- `PasteService.swift`：辅助功能焦点与光标可用性检测、自动化 `⌘V` 注入与纯文本格式清理。
+- `PinyinHelper.swift`：系统原生 `CFStringTransform` 中文拼音首字母与全拼提取及多词 AND 搜索匹配器。
+- `SensitiveMasker.swift`：常见 API Token、OpenAI Key、AWS 密钥及私钥的正则识别与脱敏遮蔽。
+- `Info.plist`：应用标识、版本、最低系统版本、`CFBundleIconFile` 以及 `LSUIElement`。
 - `MakeIcon.swift` / `make-icon.sh`：生成 `Resources/AppIcon.icns`。
 
 ### 应用图标
@@ -262,18 +281,13 @@ chmod +x scripts/make-icon.sh
 ### 环境
 
 - macOS
-- Apple Command Line Tools 或完整 Xcode
+- 带 macOS 26 或更新 SDK 的 Apple Command Line Tools 或完整 Xcode
 - Swift 5.9 兼容工具链
 - 不需要下载依赖
 
-构建脚本会优先使用：
-
-```text
-/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk
-```
-
-该 SDK 不存在时，脚本会自动使用 `xcrun --sdk macosx --show-sdk-path` 返回的
-当前 SDK。
+构建脚本使用 `xcrun --sdk macosx --show-sdk-path` 返回的当前 SDK。
+最低运行版本为 macOS 26。窗口主体直接使用 `NSGlassEffectView` 原生液态玻璃，
+外观由系统管理，包括浅色、深色以及辅助功能设置。
 
 ### 构建通用应用
 
@@ -333,6 +347,72 @@ Developer ID 签名并完成 notarization，否则 Gatekeeper 可能警告或阻
 
 ## 6. 回归测试清单
 
+### 自动化测试
+
+运行 `./scripts/test.sh`（macOS 26+，macOS 26 或更新 SDK）。脚本将构建和模块缓存
+放在已忽略的 `work/` 下，并补齐 Command Line Tools 的测试框架搜索路径。
+GitHub Actions 配置位于 `.github/workflows/tests.yml`，使用 `macos-26` 运行环境，
+在推送、拉取请求和手动触发时执行同一脚本。
+测试代码位于 `Tests/ClipTinyTests/HistoryTests.swift`，通过 `@testable import ClipTiny`
+测试应用模块，不启动菜单栏应用。
+
+- 文本去重、空内容忽略、容量上限及设置恢复。
+- AES-GCM 历史读写、文件权限、错误密钥和损坏文件处理。
+- 图片去重、缩略图尺寸、无效图片拒绝、加密存储及裁剪/清空/孤儿清理。
+- 启动前剪贴板内容忽略、自身写回忽略、敏感类型忽略、文本与图片优先级。
+- 旧版文本记录解码。
+- 单条记录删除与关联图片资源级联清理。
+- 记录置顶与容量缩容时的置顶项绝对保留。
+- Finder 本地文件与文件夹历史捕获与读写恢复。
+- 中文拼音首字母匹配、全拼检索与多词空格 AND 搜索。
+- 敏感 API Token、Key 及私钥智能识别脱敏。
+- 应用黑名单过滤。
+- 存储防抖异步写入与同步 flush。
+- 纯文本清理与空白规范化。
+
+`HistoryStore` 的测试构造器注入临时目录、随机密钥和独立 `UserDefaults`；
+`ClipboardMonitor` 注入专用 `NSPasteboard` 并直接执行一次采集，无需等待定时器。
+默认构造方式仍使用应用存储目录、钥匙串和系统剪贴板。
+新增用例必须延续隔离方式，不能访问用户真实剪贴板历史或更改标准偏好设置。
+
+### AppKit UI 集成测试
+
+在图形登录会话中运行 `CLIPTINY_UI_TESTS=1 ./scripts/test.sh --filter UITests`。
+`Tests/ClipTinyTests/UITests.swift` 包含 6 项测试，默认关闭，显式开启后会短暂显示
+真实窗口。每项通过 `MainActor.run` 完成初始化、交互和清理，避免测试宿主将
+同步初始化调度到后台线程。历史和窗口设置均使用独立临时存储。
+
+覆盖搜索文本输入、分类控件 action、窗口快捷键响应链、字段编辑器导航、
+刷新后的选中项保留、Esc 清空/关闭、关闭按钮、窗口重新打开与尺寸恢复，
+以及浅深色下最小尺寸的基础布局断言。
+
+这些检查不发送系统级鼠标键盘事件，也不评估截图视觉质量；不覆盖真实全局
+快捷键注册、跨应用焦点恢复或粘贴。布局检查只验证可见尺寸、约束歧义和
+粘贴按钮边界，仍需按下方清单进行完整视觉检查。
+
+### 桌面端到端与打包验证
+
+`./scripts/test-desktop.sh` 编译两个测试应用：使用生产 `AppDelegate`、窗口、监控器和
+全局快捷键代码的隔离历史应用，以及支持图片附件的原生富文本接收器。
+桌面驱动通过 CGEvent 发送真实按键；测试状态文件仅用于观察结果，不直接调用
+被测窗口的操作方法。运行期间会短暂退出原 ClipTiny 并接管焦点，请勿同时操作。
+正常结束或捕获测试失败后，脚本恢复原应用与内存中保存的剪贴板内容。
+强制杀死驱动或系统崩溃无法保证恢复；若发生，请重新打开原应用。
+
+报告在 `work/desktop-tests/run.*/results.json` 中分别列出通过、跳过与失败项目。
+新编译的测试应用可能没有辅助功能权限：驱动会验证无授权降级路径，并明确跳过
+自动文本/图片粘贴和授权后的非文本目标保护。若要测试完整路径，需要用户为
+`work/desktop-tests/ClipTinyFixture.app` 授予权限后重跑；脚本不自动修改系统授权。
+接收器是专用原生 AppKit 应用，测试结果不代表所有第三方应用兼容性。
+
+`./scripts/verify-app.sh` 在构建后验证应用结构、双架构、最低系统版本、LSUIElement、
+资源一致性、签名，以及压缩后再解压的签名/执行权限/二进制完整性。
+只验证本地 ad-hoc 签名，不代表已完成 Developer ID 签名或公证。
+
+### 手动回归
+
+仍需人工验收真实钥匙串授权、不同第三方应用、Spaces、多显示器恢复与视觉效果。
+辅助功能授权后的自动粘贴是否已覆盖，以当次桌面测试报告为准。
 每次改动交互或打包后手动验证：
 
 1. 启动后只出现菜单栏图标，没有 Dock 图标。
@@ -361,6 +441,9 @@ Developer ID 签名并完成 notarization，否则 Gatekeeper 可能警告或阻
 21. Finder 里 `outputs/ClipTiny.app` 显示为“应用程序”并带自定义图标，
     `Contents/Resources/AppIcon.icns` 存在。
 22. Apple 芯片和 Intel 架构均存在，签名与压缩包校验通过。
+23. “全部 / 文本 / 图片”筛选可与搜索组合使用；没有结果时显示空状态并禁用粘贴按钮。
+24. 切换系统浅色、深色与辅助功能显示设置时，导航材质和正文颜色随系统变化。
+    在最小窗口尺寸下检查列表、图片、长文本及空状态。
 
 ## 7. 常见修改注意点
 
