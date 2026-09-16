@@ -26,7 +26,7 @@ JSON 结果：`work/desktop-tests/run.IA1PPr/results.json`。
 
 ## 打包验证
 
-本轮重新构建 `outputs/ClipTiny.app`，版本 2.0.3（8）：
+本轮重新构建 `outputs/ClipTiny.app`，版本 2.0.4（9）：
 
 - x86_64 + arm64；两个架构的最低系统版本均为 26.0，SDK 26.5。
 - Info.plist 合法，APPL/LSUIElement 标记正确，二进制可执行。
@@ -35,7 +35,7 @@ JSON 结果：`work/desktop-tests/run.IA1PPr/results.json`。
 - ZIP 校验通过；解压后签名、可执行权限与二进制一致性通过。
 
 校验包：`work/verification/ClipTiny-verified.zip`。
-SHA-256：`e6ce592eefadd510005b0ecdb9858905937ad87f58f70fb968f59a661784080e`。
+SHA-256：`ddbb3aab791d71d00ab18ba41523fd828adfe479da1eca1d8c332ce1ef078c2d`。
 没有替换 `/Applications` 中的已安装版本。双架构验证包括构建和格式检查，
 不代表已在 Apple 芯片硬件上执行测试；本机执行环境为 x86_64。
 
