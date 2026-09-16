@@ -1,17 +1,28 @@
 import AppKit
 import ApplicationServices
 
+enum WindowPositionMode: String, CaseIterable {
+    case centerAndRemember = "remember"
+    case followMouse = "mouse"
+    case followFocusedElement = "cursor"
+}
+
 final class ShortcutPanel: NSPanel {
     var focusSearch: (() -> Void)?
     var dismiss: (() -> Void)?
     var copySelection: (() -> Void)?
     var selectKind: ((Int) -> Void)?
     var openLink: (() -> Void)?
+    var revealFile: (() -> Void)?
+    var togglePin: (() -> Void)?
+    var deleteSelection: (() -> Void)?
+    var pastePlainText: (() -> Void)?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let shortcutModifiers = event.modifierFlags.intersection([
             .command, .option, .control, .shift
         ])
+
         if shortcutModifiers == .command {
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "f":
@@ -35,10 +46,27 @@ final class ShortcutPanel: NSPanel {
             case "o":
                 openLink?()
                 return true
+            case "r":
+                revealFile?()
+                return true
+            case "p":
+                togglePin?()
+                return true
             default:
                 break
             }
+
+            if event.keyCode == 51 { // Command + Backspace
+                deleteSelection?()
+                return true
+            }
+        } else if shortcutModifiers == .option {
+            if event.keyCode == 36 || event.keyCode == 76 { // Option + Enter
+                pastePlainText?()
+                return true
+            }
         }
+
         return super.performKeyEquivalent(with: event)
     }
 
@@ -49,49 +77,28 @@ final class ShortcutPanel: NSPanel {
 
 final class KeyboardTableView: NSTableView {
     var activateSelection: (() -> Void)?
+    var pastePlainText: (() -> Void)?
+    var deleteSelection: (() -> Void)?
+    var togglePin: (() -> Void)?
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 || event.keyCode == 76 { // Return / Enter
-            activateSelection?()
+            if event.modifierFlags.contains(.option) {
+                pastePlainText?()
+            } else {
+                activateSelection?()
+            }
         } else if event.keyCode == 53 { // Esc
             (window as? ShortcutPanel)?.dismiss?()
         } else if event.keyCode == 48 { // Tab
             (window as? ShortcutPanel)?.focusSearch?()
+        } else if (event.keyCode == 51 && event.modifierFlags.contains(.command)) || event.keyCode == 117 {
+            deleteSelection?()
+        } else if event.charactersIgnoringModifiers?.lowercased() == "p" && event.modifierFlags.contains(.command) {
+            togglePin?()
         } else {
             super.keyDown(with: event)
         }
-    }
-}
-
-final class KeycapBadgeView: NSView {
-    private let label = NSTextField(labelWithString: "")
-
-    init(key: String) {
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.cornerRadius = 4
-        layer?.masksToBounds = true
-        layer?.borderWidth = 0.5
-        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.3).cgColor
-        layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.35).cgColor
-
-        label.stringValue = key
-        label.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
-        label.textColor = .secondaryLabelColor
-        label.alignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(label)
-
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            heightAnchor.constraint(equalToConstant: 18)
-        ])
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
     }
 }
 
@@ -140,55 +147,6 @@ final class KeycapButton: NSButton {
     }
 }
 
-final class ColorPreviewCardView: NSView {
-    private let swatchBox = NSBox()
-    private let hexLabel = NSTextField(labelWithString: "")
-    private let rgbLabel = NSTextField(labelWithString: "")
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-
-        swatchBox.boxType = .custom
-        swatchBox.titlePosition = .noTitle
-        swatchBox.cornerRadius = 10
-        swatchBox.borderWidth = 0.5
-        swatchBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.4)
-        swatchBox.contentViewMargins = .zero
-
-        hexLabel.font = .monospacedSystemFont(ofSize: 18, weight: .semibold)
-        hexLabel.textColor = .labelColor
-        hexLabel.isSelectable = true
-
-        rgbLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        rgbLabel.textColor = .secondaryLabelColor
-        rgbLabel.isSelectable = true
-
-        let stack = NSStackView(views: [swatchBox, hexLabel, rgbLabel])
-        stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = 14
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            swatchBox.widthAnchor.constraint(equalToConstant: 180),
-            swatchBox.heightAnchor.constraint(equalToConstant: 90),
-            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor)
-        ])
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func configure(hex: String, color: NSColor) {
-        swatchBox.fillColor = color
-        hexLabel.stringValue = hex
-        rgbLabel.stringValue = color.rgbComponentsString
-    }
-}
-
 final class HistoryWindowController: NSWindowController,
     NSTableViewDataSource,
     NSTableViewDelegate,
@@ -196,7 +154,7 @@ final class HistoryWindowController: NSWindowController,
     NSSearchFieldDelegate {
 
     private static let windowFrameKey = "HistoryWindowFrame"
-    private static let accessibilityPromptedKey = "AccessibilityPermissionPrompted"
+    private static let windowPositionModeKey = "WindowPositionMode"
     private static let minimumSize = NSSize(width: 760, height: 440)
 
     private let defaults: UserDefaults
@@ -217,20 +175,9 @@ final class HistoryWindowController: NSWindowController,
     private let listEmptyTitle = NSTextField(labelWithString: "还没有复制记录")
     private let listEmptyDetail = NSTextField(labelWithString: "复制文本或图片后，会显示在这里")
 
-    private let previewTypeIcon = NSImageView()
-    private let previewTitle = NSTextField(labelWithString: "内容预览")
-    private let previewSubtitle = NSTextField(labelWithString: "选择一条记录，查看完整内容")
-    private let openLinkButton = NSButton(title: "打开链接", target: nil, action: nil)
-
+    private let previewView = HistoryPreviewCardView()
     private let pasteButton = NSButton(title: "粘贴", target: nil, action: nil)
-    private let previewBox = NSBox()
-    private let previewImageView = NSImageView()
-    private let previewTextView = NSTextView()
-    private let previewTextScrollView = NSScrollView()
-    private let previewColorCard = ColorPreviewCardView()
-    private let previewInfoLabel = NSTextField(labelWithString: "")
-    private let previewDetailLabel = NSTextField(labelWithString: "")
-    private let previewPlaceholder = NSStackView()
+
     private var filteredItems: [HistoryItem] = []
     private var previousApp: NSRunningApplication?
 
@@ -277,7 +224,18 @@ final class HistoryWindowController: NSWindowController,
         panel.copySelection = { [weak self] in self?.copySelectedItem() }
         panel.selectKind = { [weak self] index in self?.selectKindFilter(index) }
         panel.openLink = { [weak self] in self?.openSelectedItemLink() }
+        panel.revealFile = { [weak self] in self?.revealSelectedItemInFinder() }
+        panel.togglePin = { [weak self] in self?.togglePinSelectedItem() }
+        panel.deleteSelection = { [weak self] in self?.deleteSelectedItem() }
+        panel.pastePlainText = { [weak self] in self?.pasteSelectedItem(plainText: true) }
+
+        previewView.onOpenLink = { [weak self] in self?.openSelectedItemLink() }
+        previewView.onRevealInFinder = { [weak self] in self?.revealSelectedItemInFinder() }
         store.onChange = { [weak self] in self?.refresh() }
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     required init?(coder: NSCoder) {
@@ -294,6 +252,7 @@ final class HistoryWindowController: NSWindowController,
 
     func show() {
         previousApp = NSWorkspace.shared.frontmostApplication
+        positionWindow()
         refresh()
 
         NSApplication.shared.activate()
@@ -306,6 +265,7 @@ final class HistoryWindowController: NSWindowController,
 
     func hide() {
         saveWindowFrame()
+        store.flushSync()
         window?.orderOut(nil)
         searchField.stringValue = ""
         refresh()
@@ -314,15 +274,96 @@ final class HistoryWindowController: NSWindowController,
 
     func windowWillClose(_ notification: Notification) {
         saveWindowFrame()
+        store.flushSync()
+    }
+
+    private func positionWindow() {
+        guard let panel = window else { return }
+        let modeString = defaults.string(forKey: Self.windowPositionModeKey)
+            ?? WindowPositionMode.centerAndRemember.rawValue
+        let mode = WindowPositionMode(rawValue: modeString) ?? .centerAndRemember
+
+        switch mode {
+        case .centerAndRemember:
+            // 记忆模式下只在初始时恢复，后续保持当前位置
+            break
+        case .followMouse:
+            positionNearMouse(panel: panel)
+        case .followFocusedElement:
+            if !positionNearFocusedElement(panel: panel) {
+                positionNearMouse(panel: panel)
+            }
+        }
+    }
+
+    private func positionNearMouse(panel: NSWindow) {
+        let mouseLoc = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSPointInRect(mouseLoc, $0.frame) }
+            ?? NSScreen.main ?? panel.screen
+        guard let screen else { return }
+        let vis = screen.visibleFrame
+        let size = panel.frame.size
+        var x = mouseLoc.x - size.width * 0.3
+        var y = mouseLoc.y - size.height * 0.1
+        x = max(vis.minX + 10, min(x, vis.maxX - size.width - 10))
+        y = max(vis.minY + 10, min(y, vis.maxY - size.height - 10))
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    private func positionNearFocusedElement(panel: NSWindow) -> Bool {
+        var focused: CFTypeRef?
+        guard
+            AXUIElementCopyAttributeValue(
+                AXUIElementCreateSystemWide(),
+                kAXFocusedUIElementAttribute as CFString,
+                &focused
+            ) == .success,
+            let value = focused,
+            CFGetTypeID(value) == AXUIElementGetTypeID()
+        else { return false }
+
+        let element = value as! AXUIElement
+        var posVal: CFTypeRef?
+        var sizeVal: CFTypeRef?
+
+        guard
+            AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posVal) == .success,
+            AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeVal) == .success,
+            let posAX = posVal, let sizeAX = sizeVal
+        else { return false }
+
+        var screenPoint = CGPoint.zero
+        var elemSize = CGSize.zero
+        guard
+            AXValueGetValue(posAX as! AXValue, .cgPoint, &screenPoint),
+            AXValueGetValue(sizeAX as! AXValue, .cgSize, &elemSize)
+        else { return false }
+
+        guard let primary = NSScreen.screens.first else { return false }
+        let primaryHeight = primary.frame.height
+        let cocoaY = primaryHeight - (screenPoint.y + elemSize.height)
+
+        let targetScreen = NSScreen.screens.first {
+            NSPointInRect(NSPoint(x: screenPoint.x, y: cocoaY), $0.frame)
+        } ?? primary
+
+        let vis = targetScreen.visibleFrame
+        let size = panel.frame.size
+        var x = screenPoint.x
+        var y = cocoaY - size.height - 10
+        if y < vis.minY {
+            y = (primaryHeight - screenPoint.y) + 10
+        }
+
+        x = max(vis.minX + 10, min(x, vis.maxX - size.width - 10))
+        y = max(vis.minY + 10, min(y, vis.maxY - size.height - 10))
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        return true
     }
 
     private func restoreWindowFrame() {
         guard let panel = window else { return }
-        guard
-            let saved = defaults.string(
-                forKey: Self.windowFrameKey
-            )
-        else {
+        guard let saved = defaults.string(forKey: Self.windowFrameKey) else {
             panel.center()
             return
         }
@@ -346,10 +387,7 @@ final class HistoryWindowController: NSWindowController,
 
     private func saveWindowFrame() {
         guard let frame = window?.frame else { return }
-        defaults.set(
-            NSStringFromRect(frame),
-            forKey: Self.windowFrameKey
-        )
+        defaults.set(NSStringFromRect(frame), forKey: Self.windowFrameKey)
     }
 
     private func configureUI() {
@@ -415,7 +453,10 @@ final class HistoryWindowController: NSWindowController,
         tableView.delegate = self
         tableView.target = self
         tableView.doubleAction = #selector(activateSelectedItem)
-        tableView.activateSelection = { [weak self] in self?.pasteSelectedItem() }
+        tableView.activateSelection = { [weak self] in self?.pasteSelectedItem(plainText: false) }
+        tableView.pastePlainText = { [weak self] in self?.pasteSelectedItem(plainText: true) }
+        tableView.deleteSelection = { [weak self] in self?.deleteSelectedItem() }
+        tableView.togglePin = { [weak self] in self?.togglePinSelectedItem() }
         tableView.setAccessibilityLabel("剪贴板历史记录")
 
         let scrollView = NSScrollView()
@@ -425,38 +466,17 @@ final class HistoryWindowController: NSWindowController,
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
 
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(clipViewDidScroll(_:)),
+            name: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView
+        )
+
         configureEmptyState(
             listEmptyState, iconView: listEmptyIcon, symbol: "tray", title: listEmptyTitle, detail: listEmptyDetail
         )
-
-        // 右侧预览顶部 Header
-        previewTypeIcon.symbolConfiguration = .init(pointSize: 12, weight: .medium)
-        previewTypeIcon.contentTintColor = .secondaryLabelColor
-
-        previewTitle.font = .systemFont(ofSize: 11, weight: .semibold)
-        previewTitle.textColor = .labelColor
-
-        previewSubtitle.font = .systemFont(ofSize: 11)
-        previewSubtitle.textColor = .secondaryLabelColor
-        previewSubtitle.lineBreakMode = .byTruncatingTail
-        previewSubtitle.setContentCompressionResistancePriority(.init(1), for: .horizontal)
-
-        openLinkButton.bezelStyle = .inline
-        openLinkButton.controlSize = .small
-        openLinkButton.font = .systemFont(ofSize: 10, weight: .medium)
-        openLinkButton.image = NSImage(systemSymbolName: "arrow.up.right.square", accessibilityDescription: nil)
-        openLinkButton.imagePosition = .imageTrailing
-        openLinkButton.target = self
-        openLinkButton.action = #selector(openSelectedItemLink)
-        openLinkButton.toolTip = "在默认浏览器中打开 (⌘O)"
-        openLinkButton.isHidden = true
-
-        let previewHeaderStack = NSStackView(views: [previewTypeIcon, previewTitle, previewSubtitle])
-        previewHeaderStack.orientation = .horizontal
-        previewHeaderStack.spacing = 6
-        previewHeaderStack.alignment = .centerY
-
-        configurePreview()
 
         pasteButton.bezelStyle = .rounded
         pasteButton.controlSize = .small
@@ -472,10 +492,11 @@ final class HistoryWindowController: NSWindowController,
             shortcutHint("↑↓", "选择"),
             shortcutHint("⌘F", "搜索"),
             shortcutHint("⌘C", "复制"),
-            shortcutHint("⌘1-3", "筛选")
+            shortcutHint("⌘P", "置顶"),
+            shortcutHint("⌘⌫", "删除")
         ])
         footer.orientation = .horizontal
-        footer.spacing = 14
+        footer.spacing = 12
 
         let brand = NSTextField(labelWithString: "ClipTiny")
         brand.font = .systemFont(ofSize: 11, weight: .semibold)
@@ -490,7 +511,7 @@ final class HistoryWindowController: NSWindowController,
         [topDivider, columnDivider, bottomDivider].forEach { $0.boxType = .separator }
 
         [searchIcon, searchField, closeButton, kindFilter, countLabel, scrollView, listEmptyState,
-         previewHeaderStack, openLinkButton, previewBox, pasteButton, footer, brand,
+         previewView, pasteButton, footer, brand,
          topDivider, columnDivider, bottomDivider].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             surface.addSubview($0)
@@ -542,19 +563,10 @@ final class HistoryWindowController: NSWindowController,
             listEmptyState.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
             listEmptyState.widthAnchor.constraint(lessThanOrEqualTo: scrollView.widthAnchor, constant: -24),
 
-            // 右侧 Header 与左侧 分类选择器 水平基线完全对齐
-            previewHeaderStack.leadingAnchor.constraint(equalTo: columnDivider.trailingAnchor, constant: 16),
-            previewHeaderStack.centerYAnchor.constraint(equalTo: kindFilter.centerYAnchor),
-            previewHeaderStack.trailingAnchor.constraint(lessThanOrEqualTo: openLinkButton.leadingAnchor, constant: -8),
-
-            openLinkButton.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -16),
-            openLinkButton.centerYAnchor.constraint(equalTo: kindFilter.centerYAnchor),
-
-            // 右侧 previewBox 顶部和底部与左侧 scrollView 严格对齐
-            previewBox.topAnchor.constraint(equalTo: scrollView.topAnchor),
-            previewBox.leadingAnchor.constraint(equalTo: columnDivider.trailingAnchor, constant: 14),
-            previewBox.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -16),
-            previewBox.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            previewView.topAnchor.constraint(equalTo: kindFilter.topAnchor),
+            previewView.leadingAnchor.constraint(equalTo: columnDivider.trailingAnchor, constant: 14),
+            previewView.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -16),
+            previewView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
 
             bottomDivider.bottomAnchor.constraint(equalTo: surface.bottomAnchor, constant: -42),
             bottomDivider.leadingAnchor.constraint(equalTo: surface.leadingAnchor),
@@ -562,7 +574,7 @@ final class HistoryWindowController: NSWindowController,
 
             brand.leadingAnchor.constraint(equalTo: surface.leadingAnchor, constant: 24),
             brand.centerYAnchor.constraint(equalTo: surface.bottomAnchor, constant: -21),
-            footer.leadingAnchor.constraint(equalTo: brand.trailingAnchor, constant: 20),
+            footer.leadingAnchor.constraint(equalTo: brand.trailingAnchor, constant: 16),
             footer.centerYAnchor.constraint(equalTo: brand.centerYAnchor),
 
             pasteButton.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -20),
@@ -614,117 +626,6 @@ final class HistoryWindowController: NSWindowController,
         [iconView, title, detail].forEach { stack.addArrangedSubview($0) }
     }
 
-    private func configurePreview() {
-        previewBox.boxType = .custom
-        previewBox.titlePosition = .noTitle
-        previewBox.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.35)
-        previewBox.cornerRadius = 10
-        previewBox.borderWidth = 0.5
-        previewBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.35)
-        previewBox.contentViewMargins = .zero
-
-        previewImageView.imageScaling = .scaleProportionallyDown
-        previewImageView.imageAlignment = .alignCenter
-        previewImageView.wantsLayer = true
-        previewImageView.layer?.cornerRadius = 8
-        previewImageView.layer?.masksToBounds = true
-        previewImageView.layer?.borderWidth = 0.5
-        previewImageView.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.3).cgColor
-        [NSLayoutConstraint.Orientation.horizontal, .vertical].forEach {
-            previewImageView.setContentHuggingPriority(.init(1), for: $0)
-            previewImageView.setContentCompressionResistancePriority(.init(1), for: $0)
-        }
-
-        previewTextView.isEditable = false
-        previewTextView.isSelectable = true
-        previewTextView.drawsBackground = false
-        previewTextView.textColor = .textColor
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 4
-        previewTextView.defaultParagraphStyle = paragraph
-        previewTextView.textContainerInset = NSSize(width: 6, height: 6)
-        previewTextView.minSize = .zero
-        previewTextView.maxSize = NSSize(
-            width: CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        previewTextView.isVerticallyResizable = true
-        previewTextView.isHorizontallyResizable = false
-        previewTextView.autoresizingMask = [.width]
-        previewTextView.textContainer?.widthTracksTextView = true
-        previewTextView.textContainer?.containerSize = NSSize(
-            width: 0,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        previewTextView.setAccessibilityLabel("记录全文")
-
-        previewTextScrollView.documentView = previewTextView
-        previewTextScrollView.hasVerticalScroller = true
-        previewTextScrollView.autohidesScrollers = true
-        previewTextScrollView.drawsBackground = false
-        previewTextScrollView.borderType = .noBorder
-
-        previewInfoLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-        previewInfoLabel.textColor = .secondaryLabelColor
-        previewInfoLabel.lineBreakMode = .byTruncatingTail
-
-        previewDetailLabel.font = .systemFont(ofSize: 10)
-        previewDetailLabel.textColor = .secondaryLabelColor
-        previewDetailLabel.alignment = .right
-        previewDetailLabel.lineBreakMode = .byTruncatingTail
-
-        let emptyIcon = NSImageView()
-        configureEmptyState(
-            previewPlaceholder,
-            iconView: emptyIcon,
-            symbol: "doc.on.clipboard",
-            title: NSTextField(labelWithString: "预览"),
-            detail: NSTextField(labelWithString: "选择记录查看完整内容")
-        )
-
-        let metadataDivider = NSBox()
-        metadataDivider.boxType = .separator
-
-        guard let container = previewBox.contentView else { return }
-        [previewImageView, previewTextScrollView, previewColorCard, previewPlaceholder,
-         metadataDivider, previewInfoLabel, previewDetailLabel].forEach {
-            $0.translatesAutoresizingMaskIntoConstraints = false
-            container.addSubview($0)
-        }
-
-        NSLayoutConstraint.activate([
-            previewInfoLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            previewInfoLabel.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
-            previewInfoLabel.heightAnchor.constraint(equalToConstant: 14),
-
-            previewDetailLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            previewDetailLabel.centerYAnchor.constraint(equalTo: previewInfoLabel.centerYAnchor),
-            previewDetailLabel.leadingAnchor.constraint(greaterThanOrEqualTo: previewInfoLabel.trailingAnchor, constant: 8),
-
-            metadataDivider.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
-            metadataDivider.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
-            metadataDivider.bottomAnchor.constraint(equalTo: previewInfoLabel.topAnchor, constant: -8),
-
-            previewPlaceholder.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            previewPlaceholder.centerYAnchor.constraint(equalTo: container.centerYAnchor, constant: -10),
-            previewPlaceholder.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -32),
-
-            previewColorCard.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            previewColorCard.centerYAnchor.constraint(equalTo: container.centerYAnchor, constant: -10),
-            previewColorCard.widthAnchor.constraint(equalTo: container.widthAnchor, constant: -24),
-            previewColorCard.heightAnchor.constraint(equalToConstant: 160)
-        ])
-
-        [previewImageView, previewTextScrollView].forEach {
-            NSLayoutConstraint.activate([
-                $0.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
-                $0.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
-                $0.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
-                $0.bottomAnchor.constraint(equalTo: metadataDivider.topAnchor, constant: -8)
-            ])
-        }
-    }
-
     private func refresh() {
         let selectedID = filteredItems.indices.contains(tableView.selectedRow)
             ? filteredItems[tableView.selectedRow].id
@@ -736,7 +637,9 @@ final class HistoryWindowController: NSWindowController,
             let matchesKind = kindFilter.selectedSegment == 0
                 || (kindFilter.selectedSegment == 1 && !item.isImage)
                 || (kindFilter.selectedSegment == 2 && item.isImage)
-            return matchesKind && (query.isEmpty || item.text.localizedCaseInsensitiveContains(query))
+            guard matchesKind else { return false }
+            guard !query.isEmpty else { return true }
+            return PinyinHelper.queryMatches(query, text: item.text)
         }
         countLabel.stringValue = "\(filteredItems.count) 条"
         listEmptyState.isHidden = !filteredItems.isEmpty
@@ -797,8 +700,18 @@ final class HistoryWindowController: NSWindowController,
             tableView.scrollRowToVisible(row)
             return true
         case "insertNewline:":
-            pasteSelectedItem()
+            if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+                pasteSelectedItem(plainText: true)
+            } else {
+                pasteSelectedItem(plainText: false)
+            }
             return true
+        case "deleteBackward:":
+            if NSApp.currentEvent?.modifierFlags.contains(.command) == true {
+                deleteSelectedItem()
+                return true
+            }
+            return false
         case "cancelOperation:":
             if !searchField.stringValue.isEmpty {
                 searchField.stringValue = ""
@@ -846,146 +759,76 @@ final class HistoryWindowController: NSWindowController,
             ?? HistoryCellView()
         cell.identifier = identifier
         let item = filteredItems[row]
-        cell.configure(item: item, thumbnail: item.isImage ? store.images.thumbnail(for: item.id) : nil)
+        cell.configure(
+            item: item,
+            thumbnail: item.isImage ? store.images.thumbnail(for: item.id) : nil
+        )
         return cell
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        HistoryRowView()
+        let identifier = NSUserInterfaceItemIdentifier("HistoryRow")
+        let rowView = (tableView.makeView(withIdentifier: identifier, owner: self) as? HistoryRowView)
+            ?? HistoryRowView()
+        rowView.identifier = identifier
+        return rowView
+    }
+
+    @objc private func clipViewDidScroll(_ notification: Notification) {
+        tableView.enumerateAvailableRowViews { rowView, _ in
+            (rowView as? HistoryRowView)?.updateHoverState()
+        }
     }
 
     private func updatePreview() {
         let row = tableView.selectedRow
         guard filteredItems.indices.contains(row) else {
-            previewPlaceholder.isHidden = false
-            previewImageView.isHidden = true
-            previewImageView.image = nil
-            previewTextScrollView.isHidden = true
-            previewColorCard.isHidden = true
-            openLinkButton.isHidden = true
-            previewTypeIcon.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)
-            previewTitle.stringValue = "内容预览"
-            previewSubtitle.stringValue = "选择一条记录，查看完整内容"
-            previewInfoLabel.stringValue = "选择记录后按回车粘贴"
-            previewDetailLabel.stringValue = ""
+            previewView.showEmptyState()
             pasteButton.isEnabled = false
             return
         }
-
-        let item = filteredItems[row]
-        previewPlaceholder.isHidden = true
         pasteButton.isEnabled = true
-        previewInfoLabel.stringValue = item.preciseTimestamp
-        previewInfoLabel.toolTip = "复制时间：\(item.preciseTimestamp)"
-
-        let kind = detectContentKind(text: item.text, isImage: item.isImage)
-        switch kind {
-        case .image:
-            openLinkButton.isHidden = true
-            previewColorCard.isHidden = true
-            previewTextScrollView.isHidden = true
-            previewImageView.isHidden = false
-
-            previewTypeIcon.image = NSImage(systemSymbolName: "photo", accessibilityDescription: nil)
-            previewTypeIcon.contentTintColor = .systemPurple
-            previewTitle.stringValue = "图片"
-            previewSubtitle.stringValue = "\(relativeDate(item.createdAt))复制 · \(item.sizeSummary)"
-            previewDetailLabel.stringValue = "PNG 图像"
-
-            let image = store.images.image(for: item.id)
-            previewImageView.image = image
-            if image == nil {
-                previewInfoLabel.stringValue = "图片文件已丢失，无法预览"
-            }
-
-        case .color(let hex, let color):
-            openLinkButton.isHidden = true
-            previewImageView.isHidden = true
-            previewImageView.image = nil
-            previewTextScrollView.isHidden = true
-            previewColorCard.isHidden = false
-
-            previewTypeIcon.image = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: nil)
-            previewTypeIcon.contentTintColor = .systemPink
-            previewTitle.stringValue = "颜色"
-            previewSubtitle.stringValue = "\(relativeDate(item.createdAt))复制 · \(color.hexRGBString)"
-            previewDetailLabel.stringValue = color.rgbComponentsString
-            previewColorCard.configure(hex: hex, color: color)
-
-        case .link(let url):
-            openLinkButton.isHidden = false
-            previewColorCard.isHidden = true
-            previewImageView.isHidden = true
-            previewImageView.image = nil
-            previewTextScrollView.isHidden = false
-
-            previewTypeIcon.image = NSImage(systemSymbolName: "link", accessibilityDescription: nil)
-            previewTypeIcon.contentTintColor = .systemTeal
-            previewTitle.stringValue = "链接"
-            previewSubtitle.stringValue = "\(relativeDate(item.createdAt))复制 · \(url.host ?? "")"
-            previewDetailLabel.stringValue = "\(item.text.count) 字符"
-
-            previewTextView.font = .systemFont(ofSize: 13)
-            previewTextView.string = item.text
-            previewTextView.scroll(.zero)
-
-        case .code(let lineCount):
-            openLinkButton.isHidden = true
-            previewColorCard.isHidden = true
-            previewImageView.isHidden = true
-            previewImageView.image = nil
-            previewTextScrollView.isHidden = false
-
-            previewTypeIcon.image = NSImage(systemSymbolName: "curlybraces", accessibilityDescription: nil)
-            previewTypeIcon.contentTintColor = .systemOrange
-            previewTitle.stringValue = "代码"
-            previewSubtitle.stringValue = "\(relativeDate(item.createdAt))复制 · \(lineCount) 行"
-            previewDetailLabel.stringValue = "\(item.text.count) 字符"
-
-            previewTextView.font = .monospacedSystemFont(ofSize: 12.5, weight: .regular)
-            previewTextView.string = item.text
-            previewTextView.scroll(.zero)
-
-        case .text:
-            openLinkButton.isHidden = true
-            previewColorCard.isHidden = true
-            previewImageView.isHidden = true
-            previewImageView.image = nil
-            previewTextScrollView.isHidden = false
-
-            previewTypeIcon.image = NSImage(systemSymbolName: "text.alignleft", accessibilityDescription: nil)
-            previewTypeIcon.contentTintColor = .secondaryLabelColor
-            previewTitle.stringValue = "文本"
-            previewSubtitle.stringValue = "\(relativeDate(item.createdAt))复制 · \(item.sizeSummary)"
-            previewDetailLabel.stringValue = "\(item.text.count) 字符"
-
-            previewTextView.font = .systemFont(ofSize: 13)
-            previewTextView.string = item.text
-            previewTextView.scroll(.zero)
-        }
-    }
-
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter
-    }()
-
-    private func relativeDate(_ date: Date) -> String {
-        let now = Date()
-        guard now.timeIntervalSince(date) >= 60 else { return "刚刚" }
-        return Self.relativeFormatter.localizedString(for: date, relativeTo: now)
+        let item = filteredItems[row]
+        previewView.display(item: item, images: store.images)
     }
 
     @objc private func activateSelectedItem() {
-        pasteSelectedItem()
+        pasteSelectedItem(plainText: false)
     }
 
     private func copySelectedItem() {
         let row = tableView.selectedRow
         guard filteredItems.indices.contains(row) else { return }
-        guard writeToPasteboard(filteredItems[row]) else { return }
+        guard writeToPasteboard(filteredItems[row], plainText: false) else { return }
         hide()
+    }
+
+    private func deleteSelectedItem() {
+        let row = tableView.selectedRow
+        guard filteredItems.indices.contains(row) else { return }
+        let item = filteredItems[row]
+        store.delete(id: item.id)
+
+        filteredItems.remove(at: row)
+        tableView.removeRows(at: IndexSet(integer: row), withAnimation: .effectFade)
+
+        if !filteredItems.isEmpty {
+            let nextRow = min(row, filteredItems.count - 1)
+            tableView.selectRowIndexes(IndexSet(integer: nextRow), byExtendingSelection: false)
+        } else {
+            tableView.deselectAll(nil)
+        }
+        countLabel.stringValue = "\(filteredItems.count) 条"
+        listEmptyState.isHidden = !filteredItems.isEmpty
+        updatePreview()
+    }
+
+    private func togglePinSelectedItem() {
+        let row = tableView.selectedRow
+        guard filteredItems.indices.contains(row) else { return }
+        let item = filteredItems[row]
+        store.togglePin(id: item.id)
+        refresh()
     }
 
     @objc private func openSelectedItemLink() {
@@ -998,49 +841,42 @@ final class HistoryWindowController: NSWindowController,
         }
     }
 
-    private func pasteSelectedItem() {
+    @objc private func revealSelectedItemInFinder() {
         let row = tableView.selectedRow
         guard filteredItems.indices.contains(row) else { return }
-        guard writeToPasteboard(filteredItems[row]) else { return }
+        let item = filteredItems[row]
+        if let url = item.fileURL {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            hide()
+        }
+    }
+
+    private func pasteSelectedItem(plainText: Bool = false) {
+        let row = tableView.selectedRow
+        guard filteredItems.indices.contains(row) else { return }
+        guard writeToPasteboard(filteredItems[row], plainText: plainText) else { return }
 
         hide()
 
-        guard accessibilityAutomationAllowed() else { return }
+        guard PasteService.accessibilityAutomationAllowed(defaults: defaults) else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
-            Self.pasteWhenCursorAvailable(attemptsLeft: 10)
+            PasteService.pasteWhenCursorAvailable(attemptsLeft: 10)
         }
     }
 
-    private static func pasteWhenCursorAvailable(attemptsLeft: Int) {
-        let status = focusedElementTextStatus()
-        switch status {
-        case .textInput:
-            postPasteShortcut()
-        case .nonText, .unavailable:
-            guard attemptsLeft > 1 else {
-                let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-                if case .unavailable = status,
-                   frontmostPID != ProcessInfo.processInfo.processIdentifier {
-                    postPasteShortcut()
-                }
-                return
-            }
-            retryPaste(attemptsLeft: attemptsLeft)
-        }
-    }
-
-    private static func retryPaste(attemptsLeft: Int) {
-        guard attemptsLeft > 1 else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            pasteWhenCursorAvailable(attemptsLeft: attemptsLeft - 1)
-        }
-    }
-
-    private func writeToPasteboard(_ item: HistoryItem) -> Bool {
+    private func writeToPasteboard(_ item: HistoryItem, plainText: Bool) -> Bool {
         let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+
+        if plainText {
+            let cleanedText = PasteService.formatPlainText(item.text)
+            pasteboard.setString(cleanedText, forType: .string)
+            onPasteboardWrite?(pasteboard.changeCount)
+            return true
+        }
+
         switch item.kind {
         case .text:
-            pasteboard.clearContents()
             pasteboard.setString(item.text, forType: .string)
         case .image:
             guard let png = store.images.pngData(for: item.id) else { return false }
@@ -1049,100 +885,15 @@ final class HistoryWindowController: NSWindowController,
             if let tiff = NSImage(data: png)?.tiffRepresentation {
                 pasteboard.setData(tiff, forType: .tiff)
             }
+        case .file:
+            if let url = item.fileURL {
+                pasteboard.writeObjects([url as NSURL])
+                pasteboard.setString(url.path, forType: .string)
+            } else {
+                pasteboard.setString(item.text, forType: .string)
+            }
         }
         onPasteboardWrite?(pasteboard.changeCount)
         return true
-    }
-
-    private enum FocusedElementTextStatus {
-        case textInput
-        case nonText
-        case unavailable
-    }
-
-    private static func focusedElementTextStatus() -> FocusedElementTextStatus {
-        var focused: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(
-                AXUIElementCreateSystemWide(),
-                kAXFocusedUIElementAttribute as CFString,
-                &focused
-            ) == .success,
-            let value = focused,
-            CFGetTypeID(value) == AXUIElementGetTypeID()
-        else { return .unavailable }
-
-        let element = value as! AXUIElement
-
-        var settable = DarwinBoolean(false)
-        if AXUIElementIsAttributeSettable(
-            element,
-            kAXValueAttribute as CFString,
-            &settable
-        ) == .success, settable.boolValue {
-            return .textInput
-        }
-
-        var selectedRange: CFTypeRef?
-        if AXUIElementCopyAttributeValue(
-            element,
-            kAXSelectedTextRangeAttribute as CFString,
-            &selectedRange
-        ) == .success {
-            return .textInput
-        }
-
-        var role: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(
-                element,
-                kAXRoleAttribute as CFString,
-                &role
-            ) == .success,
-            let name = role as? String
-        else { return .unavailable }
-        if [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(name) {
-            return .textInput
-        }
-
-        let nonTextRoles: Set<String> = [
-            "AXButton", "AXCheckBox", "AXRadioButton", "AXMenuItem",
-            "AXStaticText", "AXImage", "AXList", "AXTable", "AXOutline",
-            "AXBrowser", "AXScrollArea", "AXToolbar", "AXWindow", "AXSheet",
-            "AXDialog", "AXDesktop", "AXSplitGroup"
-        ]
-        return nonTextRoles.contains(name) ? .nonText : .unavailable
-    }
-
-    private static func postPasteShortcut() {
-        guard let source = CGEventSource(stateID: .combinedSessionState),
-              let keyDown = CGEvent(
-            keyboardEventSource: source,
-            virtualKey: 9,
-            keyDown: true
-        ),
-              let keyUp = CGEvent(
-            keyboardEventSource: source,
-            virtualKey: 9,
-            keyDown: false
-        ) else { return }
-
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
-        keyDown.post(tap: .cgSessionEventTap)
-        keyUp.post(tap: .cgSessionEventTap)
-    }
-
-    private func accessibilityAutomationAllowed() -> Bool {
-        if AXIsProcessTrusted() { return true }
-        guard !defaults.bool(forKey: Self.accessibilityPromptedKey) else {
-            return false
-        }
-
-        defaults.set(true, forKey: Self.accessibilityPromptedKey)
-        let options = [
-            kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
-        ] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
     }
 }

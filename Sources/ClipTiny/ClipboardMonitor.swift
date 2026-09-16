@@ -1,6 +1,9 @@
 import AppKit
+import ApplicationServices
 
 final class ClipboardMonitor {
+    static let blacklistDefaultsKey = "ExcludedBundleIdentifiers"
+
     private static let ignoredTypes = [
         "org.nspasteboard.TransientType",
         "org.nspasteboard.ConcealedType",
@@ -9,23 +12,81 @@ final class ClipboardMonitor {
 
     private let pasteboard: NSPasteboard
     private let store: HistoryStore
-    private var timer: Timer?
-    private var lastChangeCount: Int
+    private let defaults: UserDefaults
+    private let asyncProcessing: Bool
 
-    init(store: HistoryStore, pasteboard: NSPasteboard = .general) {
+    private var timer: Timer?
+    private var currentInterval: TimeInterval = 0.35
+    private var isSleeping = false
+    private var lastChangeCount: Int
+    private var notificationObservers: [NSObjectProtocol] = []
+
+    init(
+        store: HistoryStore,
+        pasteboard: NSPasteboard = .general,
+        defaults: UserDefaults = .standard,
+        asyncProcessing: Bool? = nil
+    ) {
         self.pasteboard = pasteboard
         self.store = store
-        lastChangeCount = pasteboard.changeCount
+        self.defaults = defaults
+        self.asyncProcessing = asyncProcessing ?? (pasteboard == .general)
+        self.lastChangeCount = pasteboard.changeCount
+
+        setupSleepNotifications()
+    }
+
+    deinit {
+        stop()
+        notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        notificationObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+    }
+
+    private func setupSleepNotifications() {
+        guard pasteboard == .general else { return }
+
+        let wsCenter = NSWorkspace.shared.notificationCenter
+
+        // 监听屏幕休眠与唤醒
+        let sleepObs1 = wsCenter.addObserver(
+            forName: NSWorkspace.screensDidSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.pauseForSleep()
+        }
+
+        let wakeObs1 = wsCenter.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.resumeFromSleep()
+        }
+
+        // 监听系统休眠与唤醒
+        let sleepObs2 = wsCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.pauseForSleep()
+        }
+
+        let wakeObs2 = wsCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.resumeFromSleep()
+        }
+
+        notificationObservers.append(contentsOf: [sleepObs1, wakeObs1, sleepObs2, wakeObs2])
     }
 
     func start() {
-        timer = Timer.scheduledTimer(
-            withTimeInterval: 0.35,
-            repeats: true
-        ) { [weak self] _ in
-            self?.readIfChanged()
-        }
-        timer?.tolerance = 0.12
+        isSleeping = false
+        resetTimer(interval: 0.35, tolerance: 0.12)
     }
 
     func stop() {
@@ -33,24 +94,116 @@ final class ClipboardMonitor {
         timer = nil
     }
 
+    private func pauseForSleep() {
+        isSleeping = true
+        stop()
+    }
+
+    private func resumeFromSleep() {
+        guard isSleeping else { return }
+        isSleeping = false
+        resetTimer(interval: 0.35, tolerance: 0.12)
+        readIfChanged()
+    }
+
+    private func resetTimer(interval: TimeInterval, tolerance: TimeInterval) {
+        stop()
+        currentInterval = interval
+        let newTimer = Timer.scheduledTimer(
+            withTimeInterval: interval,
+            repeats: true
+        ) { [weak self] _ in
+            self?.handleTimerTick()
+        }
+        newTimer.tolerance = tolerance
+        timer = newTimer
+    }
+
+    private func handleTimerTick() {
+        guard !isSleeping else { return }
+        let oldCount = lastChangeCount
+        readIfChanged()
+
+        // 如果检测到剪贴板变动，直接恢复最高频 0.35s 轮询
+        if lastChangeCount != oldCount {
+            if currentInterval != 0.35 {
+                resetTimer(interval: 0.35, tolerance: 0.12)
+            }
+            return
+        }
+
+        // 自适应退避策略（根据用户最近按键/鼠标操作距离现在的秒数）
+        let (targetInterval, tolerance) = determineTargetInterval()
+        if abs(targetInterval - currentInterval) > 0.05 {
+            resetTimer(interval: targetInterval, tolerance: tolerance)
+        }
+    }
+
+    private func determineTargetInterval() -> (interval: TimeInterval, tolerance: TimeInterval) {
+        let anyEvent = CGEventType(rawValue: ~0) ?? .null
+        let idleSeconds = CGEventSource.secondsSinceLastEventType(
+            .combinedSessionState,
+            eventType: anyEvent
+        )
+        if idleSeconds < 60 {
+            return (0.35, 0.12)
+        } else if idleSeconds < 300 {
+            return (1.0, 0.3)
+        } else {
+            return (2.0, 0.5)
+        }
+    }
+
     /// ClipTiny 自己写回剪贴板时调用，避免把刚粘贴的内容再记一遍。
     func acknowledgeOwnWrite(changeCount: Int) {
         lastChangeCount = max(lastChangeCount, changeCount)
+    }
+
+    func isAppBlacklisted(_ bundleIdentifier: String) -> Bool {
+        let blacklist = defaults.stringArray(forKey: Self.blacklistDefaultsKey) ?? []
+        return blacklist.contains(bundleIdentifier)
     }
 
     func readIfChanged() {
         guard pasteboard.changeCount != lastChangeCount else { return }
         lastChangeCount = pasteboard.changeCount
 
+        // 检查应用黑名单（敏感密码管理器、特定安全工具等）
+        if let frontmostID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier {
+            if isAppBlacklisted(frontmostID) {
+                return
+            }
+        }
+
         let currentTypes = Set((pasteboard.types ?? []).map(\.rawValue))
         guard currentTypes.isDisjoint(with: Self.ignoredTypes) else { return }
 
+        // 1. 优先检查图片
         if ClipboardImage.prefersImage(in: pasteboard) {
-            if let capture = ClipboardImage.read(from: pasteboard) {
-                store.add(capture)
+            if asyncProcessing {
+                guard let (_, rawData) = ClipboardImage.rawImageData(from: pasteboard) else { return }
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    guard let capture = ClipboardImage.capture(from: rawData) else { return }
+                    DispatchQueue.main.async {
+                        self?.store.add(capture)
+                    }
+                }
+            } else {
+                if let capture = ClipboardImage.read(from: pasteboard) {
+                    store.add(capture)
+                }
             }
             return
         }
+
+        // 2. 检查 Finder 文件 / 文件夹（public.file-url 或 NSURL）
+        if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+           let firstFileURL = fileURLs.first(where: { $0.isFileURL && FileManager.default.fileExists(atPath: $0.path) }) {
+            store.addFile(url: firstFileURL)
+            return
+        }
+
+        // 3. 文本类型
         guard let text = pasteboard.string(forType: .string) else { return }
         store.add(text)
     }

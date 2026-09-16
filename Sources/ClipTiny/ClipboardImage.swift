@@ -47,14 +47,25 @@ enum ClipboardImage {
         return extensions.contains(where: lowercased.hasSuffix)
     }
 
-    static func read(from pasteboard: NSPasteboard) -> ImageCapture? {
+    /// 在主线程快速提取原始二进制与类型，避免在主线程执行沉重的图片解码
+    static func rawImageData(from pasteboard: NSPasteboard) -> (NSPasteboard.PasteboardType, Data)? {
         guard
             let type = pasteboard.availableType(from: readableTypes),
             let data = pasteboard.data(forType: type),
-            data.count <= maximumSourceBytes,
-            let representation = NSBitmapImageRep(data: data)
+            data.count <= maximumSourceBytes
         else { return nil }
+        return (type, data)
+    }
+
+    /// 后台转码与缩略图生成
+    static func capture(from data: Data) -> ImageCapture? {
+        guard let representation = NSBitmapImageRep(data: data) else { return nil }
         return capture(from: representation)
+    }
+
+    static func read(from pasteboard: NSPasteboard) -> ImageCapture? {
+        guard let (_, data) = rawImageData(from: pasteboard) else { return nil }
+        return capture(from: data)
     }
 
     private static func capture(from representation: NSBitmapImageRep) -> ImageCapture? {

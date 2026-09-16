@@ -2,6 +2,7 @@ import AppKit
 
 enum ContentKind: Equatable {
     case image
+    case file(url: URL, isDirectory: Bool)
     case color(hex: String, color: NSColor)
     case link(url: URL)
     case code(lineCount: Int)
@@ -69,6 +70,15 @@ extension NSColor {
     }
 }
 
+func detectContentKind(item: HistoryItem) -> ContentKind {
+    if item.isImage { return .image }
+    if item.isFile, let url = item.fileURL {
+        let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+        return .file(url: url, isDirectory: isDir)
+    }
+    return detectContentKind(text: item.text, isImage: false)
+}
+
 func detectContentKind(text: String, isImage: Bool) -> ContentKind {
     if isImage { return .image }
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -108,6 +118,42 @@ private func isCodeContent(text: String, lineCount: Int) -> Bool {
     return false
 }
 
+final class KeycapBadgeView: NSView {
+    private let label = NSTextField(labelWithString: "")
+
+    init(key: String = "") {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 4
+        layer?.masksToBounds = true
+        layer?.borderWidth = 0.5
+        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.3).cgColor
+        layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.35).cgColor
+
+        label.stringValue = key
+        label.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
+        label.textColor = .secondaryLabelColor
+        label.alignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: 18)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func setKey(_ key: String) {
+        label.stringValue = key
+    }
+}
+
 final class HistoryRowView: NSTableRowView {
     override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
 
@@ -117,6 +163,31 @@ final class HistoryRowView: NSTableRowView {
             if oldValue != isHovered {
                 needsDisplay = true
             }
+        }
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        isHovered = false
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            isHovered = false
+        }
+    }
+
+    func updateHoverState() {
+        guard let window = self.window else {
+            if isHovered { isHovered = false }
+            return
+        }
+        let mouseInWindow = window.mouseLocationOutsideOfEventStream
+        let mouseInView = convert(mouseInWindow, from: nil)
+        let isInside = visibleRect.contains(mouseInView) && bounds.contains(mouseInView)
+        if isHovered != isInside {
+            isHovered = isInside
         }
     }
 
@@ -133,10 +204,12 @@ final class HistoryRowView: NSTableRowView {
         let area = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
         addTrackingArea(area)
         trackingArea = area
+
+        updateHoverState()
     }
 
     override func mouseEntered(with event: NSEvent) {
-        isHovered = true
+        updateHoverState()
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -174,6 +247,7 @@ final class HistoryCellView: NSTableCellView {
     private let summary = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
     private let time = NSTextField(labelWithString: "")
+    private let pinIcon = NSImageView()
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -207,6 +281,12 @@ final class HistoryCellView: NSTableCellView {
         summary.font = .systemFont(ofSize: 13, weight: .medium)
         detail.font = .systemFont(ofSize: 11)
         detail.textColor = .secondaryLabelColor
+
+        pinIcon.image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "置顶")
+        pinIcon.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
+        pinIcon.contentTintColor = .systemOrange
+        pinIcon.isHidden = true
+
         time.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
         time.textColor = .secondaryLabelColor
         time.alignment = .right
@@ -218,7 +298,7 @@ final class HistoryCellView: NSTableCellView {
             $0.setContentCompressionResistancePriority(.init(1), for: .horizontal)
         }
 
-        [iconBox, icon, summary, detail, time].forEach {
+        [iconBox, icon, summary, detail, pinIcon, time].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
@@ -233,11 +313,16 @@ final class HistoryCellView: NSTableCellView {
             icon.bottomAnchor.constraint(equalTo: iconBox.bottomAnchor),
 
             summary.leadingAnchor.constraint(equalTo: iconBox.trailingAnchor, constant: 12),
-            summary.trailingAnchor.constraint(equalTo: time.leadingAnchor, constant: -10),
+            summary.trailingAnchor.constraint(equalTo: pinIcon.leadingAnchor, constant: -6),
             summary.topAnchor.constraint(equalTo: topAnchor, constant: 10),
 
             time.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             time.centerYAnchor.constraint(equalTo: summary.centerYAnchor),
+
+            pinIcon.trailingAnchor.constraint(equalTo: time.leadingAnchor, constant: -4),
+            pinIcon.centerYAnchor.constraint(equalTo: time.centerYAnchor),
+            pinIcon.widthAnchor.constraint(equalToConstant: 12),
+            pinIcon.heightAnchor.constraint(equalToConstant: 12),
 
             detail.leadingAnchor.constraint(equalTo: summary.leadingAnchor),
             detail.trailingAnchor.constraint(equalTo: time.trailingAnchor),
@@ -250,11 +335,13 @@ final class HistoryCellView: NSTableCellView {
     }
 
     func configure(item: HistoryItem, thumbnail: NSImage?) {
-        let kind = detectContentKind(text: item.text, isImage: item.isImage)
+        let kind = detectContentKind(item: item)
         let lines = item.text
             .split(whereSeparator: { $0.isNewline })
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+
+        pinIcon.isHidden = !item.isPinned
 
         switch kind {
         case .image:
@@ -275,6 +362,17 @@ final class HistoryCellView: NSTableCellView {
             }
             summary.stringValue = lines.first ?? item.listPreview
             detail.stringValue = "图片 · \(item.sizeSummary)"
+
+        case .file(let url, let isDirectory):
+            iconBox.fillColor = .clear
+            iconBox.borderWidth = 0
+            let fileIcon = NSWorkspace.shared.icon(forFile: url.path)
+            fileIcon.size = NSSize(width: 32, height: 32)
+            icon.image = fileIcon
+            icon.imageScaling = .scaleProportionallyUpOrDown
+            icon.contentTintColor = nil
+            summary.stringValue = item.text
+            detail.stringValue = isDirectory ? "文件夹" : "文件 · \(item.sizeSummary)"
 
         case .color(let hex, let color):
             iconBox.fillColor = color
@@ -301,8 +399,13 @@ final class HistoryCellView: NSTableCellView {
             icon.image = NSImage(systemSymbolName: "curlybraces", accessibilityDescription: "代码")
             icon.imageScaling = .scaleNone
             icon.contentTintColor = tint
-            summary.stringValue = lines.first ?? item.listPreview
-            detail.stringValue = "代码 · \(lineCount) 行 · \(item.sizeSummary)"
+
+            let isSensitive = SensitiveMasker.isSensitive(item.text)
+            let rawFirstLine = lines.first ?? item.listPreview
+            summary.stringValue = isSensitive ? SensitiveMasker.mask(rawFirstLine) : rawFirstLine
+            detail.stringValue = isSensitive
+                ? "代码 (含敏感凭证) · \(item.sizeSummary)"
+                : "代码 · \(lineCount) 行 · \(item.sizeSummary)"
 
         case .text:
             let tint: NSColor = .secondaryLabelColor
@@ -311,8 +414,15 @@ final class HistoryCellView: NSTableCellView {
             icon.image = NSImage(systemSymbolName: "text.alignleft", accessibilityDescription: "文本")
             icon.imageScaling = .scaleNone
             icon.contentTintColor = tint
-            summary.stringValue = lines.first ?? item.listPreview
-            detail.stringValue = lines.dropFirst().first ?? "文本 · \(item.sizeSummary)"
+
+            let isSensitive = SensitiveMasker.isSensitive(item.text)
+            let rawFirstLine = lines.first ?? item.listPreview
+            summary.stringValue = isSensitive ? SensitiveMasker.mask(rawFirstLine) : rawFirstLine
+            if isSensitive {
+                detail.stringValue = "敏感凭证 (已脱敏) · \(item.sizeSummary)"
+            } else {
+                detail.stringValue = lines.dropFirst().first ?? "文本 · \(item.sizeSummary)"
+            }
         }
 
         if Date().timeIntervalSince(item.createdAt) < 60 {

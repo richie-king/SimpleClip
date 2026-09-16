@@ -225,4 +225,161 @@ final class HistoryTests {
         #expect(item.id == id)
         #expect(item.imageDigest == nil)
     }
+
+    @Test
+    func testSingleItemDeletion() throws {
+        store.add("项1")
+        store.add("项2")
+        let img = try capture()
+        store.add(img)
+        let imgId = try #require(store.items.first(where: { $0.isImage })?.id)
+        #expect(store.items.count == 3)
+        #expect(store.images.pngData(for: imgId) != nil)
+
+        // 删除图片
+        store.delete(id: imgId)
+        #expect(store.items.count == 2)
+        #expect(store.images.pngData(for: imgId) == nil)
+        #expect(reload().items == store.items)
+
+        // 删除文本
+        let textId = store.items[0].id
+        store.delete(id: textId)
+        #expect(store.items.count == 1)
+        #expect(reload().items == store.items)
+    }
+
+    @Test
+    func testItemPinningAndTrimPreservation() {
+        for i in 1...10 {
+            store.add("条目 \(i)")
+        }
+        #expect(store.items.count == 10)
+
+        // 置顶较早的条目 2 和条目 5
+        let item2 = store.items.first(where: { $0.text == "条目 2" })!
+        let item5 = store.items.first(where: { $0.text == "条目 5" })!
+        store.togglePin(id: item2.id)
+        store.togglePin(id: item5.id)
+
+        // 验证置顶条目排在最前面
+        #expect(store.items[0].isPinned)
+        #expect(store.items[1].isPinned)
+        #expect(!store.items[2].isPinned)
+
+        // 调整容量上限为 5，验证即使容量收缩，置顶条目绝对不会被丢弃
+        store.setMaximumCount(50) // 确保初始
+        for i in 11...60 {
+            store.add("新条目 \(i)")
+        }
+        store.setMaximumCount(50)
+        #expect(store.items.contains(where: { $0.id == item2.id && $0.isPinned }))
+        #expect(store.items.contains(where: { $0.id == item5.id && $0.isPinned }))
+
+        // 取消置顶
+        store.togglePin(id: item2.id)
+        #expect(store.items.first(where: { $0.id == item2.id })?.isPinned == false)
+    }
+
+    @Test
+    func testFileHistoryCaptureAndHandling() throws {
+        let tempFile = directory.appendingPathComponent("test-document.txt")
+        try "ClipTiny 文件内容测试".write(to: tempFile, atomically: true, encoding: .utf8)
+
+        store.addFile(url: tempFile)
+        let item = try #require(store.items.first)
+        #expect(item.kind == .file)
+        #expect(item.text == "test-document.txt")
+        #expect(item.filePath == tempFile.path)
+        #expect(item.byteCount != nil && (item.byteCount ?? 0) > 0)
+
+        let reloaded = reload()
+        #expect(reloaded.items.first?.kind == .file)
+        #expect(reloaded.items.first?.filePath == tempFile.path)
+    }
+
+    @Test
+    func testPinyinSearchAndMultiWordAndMatching() {
+        let text1 = "网址导航与剪贴板管理器"
+        #expect(PinyinHelper.pinyinInitials(for: "网址") == "wz")
+        #expect(PinyinHelper.pinyinFull(for: "网址") == "wangzhi")
+
+        // 拼音首字母匹配
+        #expect(PinyinHelper.queryMatches("wz", text: text1))
+        #expect(PinyinHelper.queryMatches("jtb", text: text1))
+
+        // 全拼匹配
+        #expect(PinyinHelper.queryMatches("wangzhi", text: text1))
+
+        // 多词空格拆分 AND 匹配
+        #expect(PinyinHelper.queryMatches("wz 管理器", text: text1))
+        #expect(PinyinHelper.queryMatches("剪贴板 导航", text: text1))
+        #expect(!PinyinHelper.queryMatches("剪贴板 音乐", text: text1))
+    }
+
+    @Test
+    func testSensitiveMasker() {
+        let githubToken = "ghp_1234567890abcdef1234567890abcdef1234"
+        #expect(SensitiveMasker.isSensitive(githubToken))
+        let maskedGh = SensitiveMasker.mask(githubToken)
+        #expect(maskedGh.hasPrefix("ghp_"))
+        #expect(maskedGh.contains("••••••••"))
+        #expect(!maskedGh.contains("abcdef1234567890"))
+
+        let openAIKey = "sk-proj-abc123def456xyz789012345"
+        #expect(SensitiveMasker.isSensitive(openAIKey))
+        let maskedOpenAI = SensitiveMasker.mask(openAIKey)
+        #expect(maskedOpenAI.hasPrefix("sk-"))
+        #expect(maskedOpenAI.contains("••••••••"))
+
+        let awsKey = "AKIA1234567890ABCDEF"
+        #expect(SensitiveMasker.isSensitive(awsKey))
+        let maskedAWS = SensitiveMasker.mask(awsKey)
+        #expect(maskedAWS.hasPrefix("AKIA"))
+        #expect(maskedAWS.contains("••••••••"))
+
+        let normalText = "普通日常文本，无任何敏感信息"
+        #expect(!SensitiveMasker.isSensitive(normalText))
+        #expect(SensitiveMasker.mask(normalText) == normalText)
+    }
+
+    @Test
+    func testAppBlacklist() {
+        let monitor = ClipboardMonitor(store: store, pasteboard: pasteboard, defaults: defaults)
+        #expect(!monitor.isAppBlacklisted("com.1password.1password"))
+
+        defaults.set(["com.1password.1password"], forKey: ClipboardMonitor.blacklistDefaultsKey)
+        #expect(monitor.isAppBlacklisted("com.1password.1password"))
+    }
+
+    @Test
+    func testDebouncedSaveAndFlushSync() throws {
+        let debouncedDir = directory.appendingPathComponent("debounced")
+        let debouncedStore = HistoryStore(
+            directory: debouncedDir,
+            key: key,
+            defaults: defaults,
+            debounceInterval: 2.0
+        )
+        debouncedStore.add("防抖测试文本")
+        let file = debouncedDir.appendingPathComponent("history.enc")
+        // 由于设置了 2 秒防抖，立即在磁盘上应该还未写入
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+
+        // 执行同步 flush
+        debouncedStore.flushSync()
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        let encrypted = try Data(contentsOf: file)
+        let plaintext = try AES.GCM.open(AES.GCM.SealedBox(combined: encrypted), using: key)
+        let items = try JSONDecoder().decode([HistoryItem].self, from: plaintext)
+        #expect(items.first?.text == "防抖测试文本")
+    }
+
+    @Test
+    func testPlainTextFormatting() {
+        let messy = "   \n\n\n第一段内容\n\n\n\n\n第二段内容\n\n   "
+        let formatted = PasteService.formatPlainText(messy)
+        #expect(formatted == "第一段内容\n\n第二段内容")
+    }
 }
+
