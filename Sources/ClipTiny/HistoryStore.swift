@@ -12,7 +12,7 @@ struct HistoryItem: Codable, Equatable {
     let kind: HistoryKind
     /// 文本记录的正文；图片记录保存一句可搜索的描述；文件记录保存文件名。
     let text: String
-    let createdAt: Date
+    var createdAt: Date
     let imageDigest: String?
     let pixelWidth: Int?
     let pixelHeight: Int?
@@ -66,32 +66,9 @@ struct HistoryItem: Codable, Equatable {
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         filePath = try container.decodeIfPresent(String.self, forKey: .filePath)
     }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encode(kind, forKey: .kind)
-        try container.encode(text, forKey: .text)
-        try container.encode(createdAt, forKey: .createdAt)
-        try container.encodeIfPresent(imageDigest, forKey: .imageDigest)
-        try container.encodeIfPresent(pixelWidth, forKey: .pixelWidth)
-        try container.encodeIfPresent(pixelHeight, forKey: .pixelHeight)
-        try container.encodeIfPresent(byteCount, forKey: .byteCount)
-        if isPinned {
-            try container.encode(isPinned, forKey: .isPinned)
-        }
-        try container.encodeIfPresent(filePath, forKey: .filePath)
-    }
 }
 
 /// 固定格式的时间戳，用 POSIX 区域避免跟随系统改成 12 小时制。
-private let listTimestampFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.dateFormat = "yyyy-MM-dd HH:mm"
-    return formatter
-}()
-
 private let preciseTimestampFormatter: DateFormatter = {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -102,9 +79,6 @@ private let preciseTimestampFormatter: DateFormatter = {
 extension HistoryItem {
     var isImage: Bool { kind == .image }
     var isFile: Bool { kind == .file }
-
-    /// 列表里显示到分钟，预览区显示到秒。
-    var timestamp: String { listTimestampFormatter.string(from: createdAt) }
 
     var preciseTimestamp: String { preciseTimestampFormatter.string(from: createdAt) }
 
@@ -188,10 +162,6 @@ final class HistoryStore {
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: directory.path
-        )
         fileURL = directory.appendingPathComponent("history.enc")
         encryptionKey = key
         images = ImageVault(
@@ -220,9 +190,8 @@ final class HistoryStore {
         guard !text.isEmpty else { return }
 
         var wasPinned = false
-        if let existing = items.first(where: { $0.kind == .text && $0.text == text }) {
-            wasPinned = existing.isPinned
-            items.removeAll { $0.kind == .text && $0.text == text }
+        if let index = items.firstIndex(where: { $0.kind == .text && $0.text == text }) {
+            wasPinned = items.remove(at: index).isPinned
         }
 
         let newItem = HistoryItem(
@@ -244,22 +213,9 @@ final class HistoryStore {
 
         // 同一张图重新复制时只把旧记录移到最前，保留置顶状态，不再复制一份文件。
         if let index = items.firstIndex(where: { $0.imageDigest == capture.digest }) {
-            let existing = items.remove(at: index)
-            items.insert(
-                HistoryItem(
-                    id: existing.id,
-                    kind: .image,
-                    text: existing.text,
-                    createdAt: Date(),
-                    imageDigest: existing.imageDigest,
-                    pixelWidth: existing.pixelWidth,
-                    pixelHeight: existing.pixelHeight,
-                    byteCount: existing.byteCount,
-                    isPinned: existing.isPinned,
-                    filePath: existing.filePath
-                ),
-                at: 0
-            )
+            var existing = items.remove(at: index)
+            existing.createdAt = Date()
+            items.insert(existing, at: 0)
             sortItems()
             save()
             onChange?()
@@ -293,9 +249,8 @@ final class HistoryStore {
         guard FileManager.default.fileExists(atPath: path) else { return }
 
         var wasPinned = false
-        if let existing = items.first(where: { $0.kind == .file && $0.filePath == path }) {
-            wasPinned = existing.isPinned
-            items.removeAll { $0.kind == .file && $0.filePath == path }
+        if let index = items.firstIndex(where: { $0.kind == .file && $0.filePath == path }) {
+            wasPinned = items.remove(at: index).isPinned
         }
 
         let attributes = try? FileManager.default.attributesOfItem(atPath: path)
@@ -330,27 +285,14 @@ final class HistoryStore {
 
     func togglePin(id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        let current = items[index]
-        let updated = HistoryItem(
-            id: current.id,
-            kind: current.kind,
-            text: current.text,
-            createdAt: current.createdAt,
-            imageDigest: current.imageDigest,
-            pixelWidth: current.pixelWidth,
-            pixelHeight: current.pixelHeight,
-            byteCount: current.byteCount,
-            isPinned: !current.isPinned,
-            filePath: current.filePath
-        )
-        items[index] = updated
+        items[index].isPinned.toggle()
         sortItems()
         save()
         onChange?()
     }
 
     func clear() {
-        items.filter(\.isImage).forEach { images.remove(id: $0.id) }
+        items.forEach { if $0.isImage { images.remove(id: $0.id) } }
         items.removeAll()
         save(immediate: true)
         onChange?()
@@ -369,31 +311,15 @@ final class HistoryStore {
         guard items.count > maximumCount else { return }
 
         // 置顶记录绝不被容量截断，只裁剪最旧的非置顶记录
-        var unpinnedIndices: [Int] = []
-        for (index, item) in items.enumerated() {
-            if !item.isPinned {
-                unpinnedIndices.append(index)
-            }
-        }
         let excessCount = items.count - maximumCount
-        guard excessCount > 0, !unpinnedIndices.isEmpty else { return }
+        let unpinnedCount = items.filter { !$0.isPinned }.count
+        let dropCount = min(excessCount, unpinnedCount)
+        guard dropCount > 0 else { return }
 
-        let toRemoveIndices = Array(unpinnedIndices.suffix(excessCount))
-        let toRemoveSet = Set(toRemoveIndices)
-
-        var newItems: [HistoryItem] = []
-        var dropped: [HistoryItem] = []
-
-        for (index, item) in items.enumerated() {
-            if toRemoveSet.contains(index) {
-                dropped.append(item)
-            } else {
-                newItems.append(item)
-            }
+        for item in items.suffix(dropCount) where item.isImage {
+            images.remove(id: item.id)
         }
-
-        items = newItems
-        dropped.filter(\.isImage).forEach { images.remove(id: $0.id) }
+        items.removeLast(dropCount)
     }
 
     private func load() {
@@ -437,15 +363,11 @@ final class HistoryStore {
         }
     }
 
-    private func performDiskSaveSync() {
-        hasPendingSave = false
+    private func writeSnapshotToFile(_ snapshot: [HistoryItem]) {
         guard
             let encryptionKey,
-            let plaintext = try? JSONEncoder().encode(items),
-            let sealedBox = try? AES.GCM.seal(
-                plaintext,
-                using: encryptionKey
-            ),
+            let plaintext = try? JSONEncoder().encode(snapshot),
+            let sealedBox = try? AES.GCM.seal(plaintext, using: encryptionKey),
             let encrypted = sealedBox.combined
         else { return }
 
@@ -460,31 +382,16 @@ final class HistoryStore {
         }
     }
 
+    private func performDiskSaveSync() {
+        hasPendingSave = false
+        writeSnapshotToFile(items)
+    }
+
     private func performDiskSaveAsync() {
         hasPendingSave = false
-        guard let encryptionKey else { return }
         let snapshot = items
-        let targetURL = fileURL
-
-        DispatchQueue.global(qos: .utility).async {
-            guard
-                let plaintext = try? JSONEncoder().encode(snapshot),
-                let sealedBox = try? AES.GCM.seal(
-                    plaintext,
-                    using: encryptionKey
-                ),
-                let encrypted = sealedBox.combined
-            else { return }
-
-            do {
-                try encrypted.write(to: targetURL, options: .atomic)
-                try FileManager.default.setAttributes(
-                    [.posixPermissions: 0o600],
-                    ofItemAtPath: targetURL.path
-                )
-            } catch {
-                NSLog("ClipTiny 无法保存加密历史：%@", error.localizedDescription)
-            }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            self?.writeSnapshotToFile(snapshot)
         }
     }
 }

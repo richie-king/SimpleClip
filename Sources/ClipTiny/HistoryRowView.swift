@@ -13,37 +13,20 @@ extension NSColor {
     static func fromHex(_ hexString: String) -> NSColor? {
         let text = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text.hasPrefix("#") else { return nil }
-        let hex = String(text.dropFirst())
-        guard hex.count == 3 || hex.count == 4 || hex.count == 6 || hex.count == 8 else { return nil }
+        var hex = String(text.dropFirst())
+        if hex.count == 3 || hex.count == 4 {
+            hex = hex.map { "\($0)\($0)" }.joined()
+        }
+        if hex.count == 6 { hex += "FF" }
+        guard hex.count == 8 else { return nil }
         var rgbValue: UInt64 = 0
         guard Scanner(string: hex).scanHexInt64(&rgbValue) else { return nil }
 
-        switch hex.count {
-        case 3:
-            let r = CGFloat((rgbValue & 0xF00) >> 8) / 15.0
-            let g = CGFloat((rgbValue & 0x0F0) >> 4) / 15.0
-            let b = CGFloat(rgbValue & 0x00F) / 15.0
-            return NSColor(srgbRed: r, green: g, blue: b, alpha: 1.0)
-        case 4:
-            let r = CGFloat((rgbValue & 0xF000) >> 12) / 15.0
-            let g = CGFloat((rgbValue & 0x0F00) >> 8) / 15.0
-            let b = CGFloat((rgbValue & 0x00F0) >> 4) / 15.0
-            let a = CGFloat(rgbValue & 0x000F) / 15.0
-            return NSColor(srgbRed: r, green: g, blue: b, alpha: a)
-        case 6:
-            let r = CGFloat((rgbValue & 0xFF0000) >> 16) / 255.0
-            let g = CGFloat((rgbValue & 0x00FF00) >> 8) / 255.0
-            let b = CGFloat(rgbValue & 0x0000FF) / 255.0
-            return NSColor(srgbRed: r, green: g, blue: b, alpha: 1.0)
-        case 8:
-            let r = CGFloat((rgbValue & 0xFF000000) >> 24) / 255.0
-            let g = CGFloat((rgbValue & 0x00FF0000) >> 16) / 255.0
-            let b = CGFloat((rgbValue & 0x0000FF00) >> 8) / 255.0
-            let a = CGFloat(rgbValue & 0x000000FF) / 255.0
-            return NSColor(srgbRed: r, green: g, blue: b, alpha: a)
-        default:
-            return nil
-        }
+        let r = CGFloat((rgbValue >> 24) & 0xFF) / 255.0
+        let g = CGFloat((rgbValue >> 16) & 0xFF) / 255.0
+        let b = CGFloat((rgbValue >> 8) & 0xFF) / 255.0
+        let a = CGFloat(rgbValue & 0xFF) / 255.0
+        return NSColor(srgbRed: r, green: g, blue: b, alpha: a)
     }
 
     var hexRGBString: String {
@@ -76,11 +59,10 @@ func detectContentKind(item: HistoryItem) -> ContentKind {
         let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
         return .file(url: url, isDirectory: isDir)
     }
-    return detectContentKind(text: item.text, isImage: false)
+    return detectContentKind(text: item.text)
 }
 
-func detectContentKind(text: String, isImage: Bool) -> ContentKind {
-    if isImage { return .image }
+func detectContentKind(text: String) -> ContentKind {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     if let color = NSColor.fromHex(trimmed) {
         return .color(hex: trimmed, color: color)
@@ -116,42 +98,6 @@ private func isCodeContent(text: String, lineCount: Int) -> Bool {
         }
     }
     return false
-}
-
-final class KeycapBadgeView: NSView {
-    private let label = NSTextField(labelWithString: "")
-
-    init(key: String = "") {
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.cornerRadius = 4
-        layer?.masksToBounds = true
-        layer?.borderWidth = 0.5
-        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.3).cgColor
-        layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.35).cgColor
-
-        label.stringValue = key
-        label.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
-        label.textColor = .secondaryLabelColor
-        label.alignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(label)
-
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            heightAnchor.constraint(equalToConstant: 18)
-        ])
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func setKey(_ key: String) {
-        label.stringValue = key
-    }
 }
 
 final class HistoryRowView: NSTableRowView {
@@ -216,28 +162,28 @@ final class HistoryRowView: NSTableRowView {
         isHovered = false
     }
 
+    private var pillPath: NSBezierPath {
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 2), xRadius: 8, yRadius: 8)
+    }
+
     override func drawBackground(in dirtyRect: NSRect) {
         super.drawBackground(in: dirtyRect)
         if isHovered && !isSelected {
-            let path = NSBezierPath(
-                roundedRect: bounds.insetBy(dx: 4, dy: 3), xRadius: 8, yRadius: 8
-            )
-            NSColor.quaternaryLabelColor.withAlphaComponent(0.35).setFill()
-            path.fill()
+            NSColor.textColor.withAlphaComponent(0.045).setFill()
+            pillPath.fill()
         }
     }
 
     override func drawSelection(in dirtyRect: NSRect) {
-        let path = NSBezierPath(
-            roundedRect: bounds.insetBy(dx: 4, dy: 3), xRadius: 8, yRadius: 8
+        NSColor.controlAccentColor.withAlphaComponent(isEmphasized ? 0.16 : 0.12).setFill()
+        pillPath.fill()
+
+        let indicator = NSBezierPath(
+            roundedRect: NSRect(x: 5, y: bounds.midY - 11, width: 3.5, height: 22),
+            xRadius: 1.75, yRadius: 1.75
         )
-        NSColor.controlAccentColor.withAlphaComponent(isEmphasized ? 0.15 : 0.10).setFill()
-        path.fill()
         NSColor.controlAccentColor.setFill()
-        NSBezierPath(
-            roundedRect: NSRect(x: 4, y: bounds.midY - 9, width: 3, height: 18),
-            xRadius: 1.5, yRadius: 1.5
-        ).fill()
+        indicator.fill()
     }
 }
 
@@ -249,46 +195,32 @@ final class HistoryCellView: NSTableCellView {
     private let time = NSTextField(labelWithString: "")
     private let pinIcon = NSImageView()
 
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "HH:mm"
-        return formatter
-    }()
-
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "MM/dd"
-        return formatter
-    }()
-
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
 
         iconBox.boxType = .custom
         iconBox.titlePosition = .noTitle
         iconBox.borderWidth = 0
-        iconBox.cornerRadius = 7
+        iconBox.cornerRadius = 8
         iconBox.contentViewMargins = .zero
 
         icon.imageScaling = .scaleProportionallyDown
-        icon.symbolConfiguration = .init(pointSize: 15, weight: .regular)
+        icon.symbolConfiguration = .init(pointSize: 14, weight: .medium)
         icon.wantsLayer = true
-        icon.layer?.cornerRadius = 6
+        icon.layer?.cornerRadius = 6.5
         icon.layer?.masksToBounds = true
 
         summary.font = .systemFont(ofSize: 13, weight: .medium)
-        detail.font = .systemFont(ofSize: 11)
+        detail.font = .systemFont(ofSize: 11, weight: .regular)
         detail.textColor = .secondaryLabelColor
 
         pinIcon.image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "置顶")
-        pinIcon.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
+        pinIcon.symbolConfiguration = .init(pointSize: 9.5, weight: .semibold)
         pinIcon.contentTintColor = .systemOrange
         pinIcon.isHidden = true
 
-        time.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-        time.textColor = .secondaryLabelColor
+        time.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
+        time.textColor = .tertiaryLabelColor
         time.alignment = .right
         time.setContentHuggingPriority(.required, for: .horizontal)
         time.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -303,26 +235,26 @@ final class HistoryCellView: NSTableCellView {
             addSubview($0)
         }
         NSLayoutConstraint.activate([
-            iconBox.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            iconBox.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             iconBox.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconBox.widthAnchor.constraint(equalToConstant: 32),
-            iconBox.heightAnchor.constraint(equalToConstant: 32),
+            iconBox.widthAnchor.constraint(equalToConstant: 34),
+            iconBox.heightAnchor.constraint(equalToConstant: 34),
             icon.leadingAnchor.constraint(equalTo: iconBox.leadingAnchor),
             icon.trailingAnchor.constraint(equalTo: iconBox.trailingAnchor),
             icon.topAnchor.constraint(equalTo: iconBox.topAnchor),
             icon.bottomAnchor.constraint(equalTo: iconBox.bottomAnchor),
 
-            summary.leadingAnchor.constraint(equalTo: iconBox.trailingAnchor, constant: 12),
+            summary.leadingAnchor.constraint(equalTo: iconBox.trailingAnchor, constant: 11),
             summary.trailingAnchor.constraint(equalTo: pinIcon.leadingAnchor, constant: -6),
-            summary.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            summary.topAnchor.constraint(equalTo: topAnchor, constant: 10.5),
 
-            time.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            time.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             time.centerYAnchor.constraint(equalTo: summary.centerYAnchor),
 
-            pinIcon.trailingAnchor.constraint(equalTo: time.leadingAnchor, constant: -4),
+            pinIcon.trailingAnchor.constraint(equalTo: time.leadingAnchor, constant: -5),
             pinIcon.centerYAnchor.constraint(equalTo: time.centerYAnchor),
-            pinIcon.widthAnchor.constraint(equalToConstant: 12),
-            pinIcon.heightAnchor.constraint(equalToConstant: 12),
+            pinIcon.widthAnchor.constraint(equalToConstant: 11),
+            pinIcon.heightAnchor.constraint(equalToConstant: 11),
 
             detail.leadingAnchor.constraint(equalTo: summary.leadingAnchor),
             detail.trailingAnchor.constraint(equalTo: time.trailingAnchor),
@@ -427,10 +359,10 @@ final class HistoryCellView: NSTableCellView {
 
         if Date().timeIntervalSince(item.createdAt) < 60 {
             time.stringValue = "刚刚"
+        } else if Calendar.current.isDateInToday(item.createdAt) {
+            time.stringValue = item.createdAt.formatted(Date.FormatStyle().hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
         } else {
-            let formatter = Calendar.current.isDateInToday(item.createdAt)
-                ? Self.timeFormatter : Self.dateFormatter
-            time.stringValue = formatter.string(from: item.createdAt)
+            time.stringValue = item.createdAt.formatted(Date.FormatStyle().month(.twoDigits).day(.twoDigits))
         }
         toolTip = "\(item.preciseTimestamp) · \(item.sizeSummary)"
     }

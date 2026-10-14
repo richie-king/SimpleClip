@@ -21,10 +21,6 @@ final class ImageVault {
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: directory.path
-        )
     }
 
     func store(id: UUID, capture: ImageCapture) -> Bool {

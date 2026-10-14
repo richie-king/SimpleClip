@@ -48,13 +48,13 @@ enum ClipboardImage {
     }
 
     /// 在主线程快速提取原始二进制与类型，避免在主线程执行沉重的图片解码
-    static func rawImageData(from pasteboard: NSPasteboard) -> (NSPasteboard.PasteboardType, Data)? {
+    static func rawImageData(from pasteboard: NSPasteboard) -> Data? {
         guard
             let type = pasteboard.availableType(from: readableTypes),
             let data = pasteboard.data(forType: type),
             data.count <= maximumSourceBytes
         else { return nil }
-        return (type, data)
+        return data
     }
 
     /// 后台转码与缩略图生成
@@ -64,7 +64,7 @@ enum ClipboardImage {
     }
 
     static func read(from pasteboard: NSPasteboard) -> ImageCapture? {
-        guard let (_, data) = rawImageData(from: pasteboard) else { return nil }
+        guard let data = rawImageData(from: pasteboard) else { return nil }
         return capture(from: data)
     }
 

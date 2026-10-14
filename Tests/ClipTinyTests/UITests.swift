@@ -172,6 +172,109 @@ private final class UIWindowFixture {
             #expect(root.bounds.contains(paste.convert(paste.bounds, to: root)))
         }
     }
+
+    func imagePreviewLayoutDoesNotStretchWindow() throws {
+        let bitmap = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 2560, pixelsHigh: 1440,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        let bytes = try #require(bitmap.bitmapData)
+        bytes.initialize(repeating: 200, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+        let pb = NSPasteboard.withUniqueName()
+        defer { pb.releaseGlobally() }
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw NSError(domain: "ClipTinyTests.PNG", code: 1)
+        }
+        pb.setData(png, forType: .png)
+        let capture = try #require(ClipboardImage.read(from: pb))
+        store.add(capture)
+
+        let initialFrame = panel.frame
+        controller.show()
+        let table = try view(NSTableView.self)
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        panel.contentView?.layoutSubtreeIfNeeded()
+
+        // 窗口不能被 2560x1440 图片撑大
+        #expect(panel.frame.width < 1200)
+        #expect(panel.frame.height < 800)
+        #expect(panel.frame.width <= initialFrame.width + 10)
+
+        // esc 按钮包含图标与标题
+        let escButton = try button("esc")
+        #expect(escButton.image != nil)
+
+        // 底部快捷栏包含对应操作项
+        let labels = views(try #require(panel.contentView)).compactMap { $0 as? NSTextField }
+        let titles = labels.map(\.stringValue)
+        #expect(titles.contains("选择"))
+        #expect(titles.contains("搜索"))
+        #expect(titles.contains("复制"))
+        #expect(titles.contains("置顶"))
+        #expect(titles.contains("删除"))
+    }
+
+    func commandDeleteBehavior() throws {
+        let table = try view(NSTableView.self)
+        let field = try view(NSSearchField.self)
+        #expect(table.numberOfRows == 3)
+
+        // 1. 焦点在搜索框，输入搜索文本
+        try search("hello")
+        #expect(field.stringValue == "hello")
+        #expect(table.numberOfRows == 1)
+
+        // 2. 按 Command + Delete：在搜索框中应快速清空搜索框内容，而不是崩溃或误删条目
+        let deleteEvent = try #require(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: .command,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+            context: nil, characters: "\u{7F}", charactersIgnoringModifiers: "\u{7F}",
+            isARepeat: false, keyCode: 51
+        ))
+        // performKeyEquivalent 返回 false，交由输入框编辑器处理
+        #expect(!panel.performKeyEquivalent(with: deleteEvent))
+        try editorCommand(#selector(NSResponder.deleteToBeginningOfLine(_:)))
+        #expect(field.stringValue.isEmpty)
+        #expect(table.numberOfRows == 3)
+
+        // 3. 搜索框为空时按 Command + Delete，删除当前选中的记录，且不会崩溃
+        #expect(panel.performKeyEquivalent(with: deleteEvent))
+        #expect(table.numberOfRows == 2)
+        #expect(panel.performKeyEquivalent(with: deleteEvent))
+        #expect(table.numberOfRows == 1)
+        // 删除最后一条记录，验证空状态切换与无崩溃
+        #expect(panel.performKeyEquivalent(with: deleteEvent))
+        #expect(table.numberOfRows == 0)
+        #expect(table.selectedRow == -1)
+    }
+
+    func mouseHoverAndSelectionStyle() throws {
+        let table = try view(NSTableView.self)
+        #expect(table.focusRingType == .none)
+        #expect(table.numberOfRows == 3)
+        #expect(table.selectedRow == 0)
+
+        // 模拟鼠标移动到第 1 行
+        let row1Rect = table.rect(ofRow: 1)
+        let moveEvent = try #require(NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: table.convert(NSPoint(x: row1Rect.midX, y: row1Rect.midY), to: nil),
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: panel.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 0,
+            pressure: 0
+        ))
+        table.mouseMoved(with: moveEvent)
+        #expect(table.selectedRow == 1)
+
+        // 验证行视图的绘制与高亮
+        let rowView = try #require(table.rowView(atRow: 1, makeIfNecessary: true) as? HistoryRowView)
+        #expect(rowView.isSelected)
+    }
 }
 
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["CLIPTINY_UI_TESTS"] == "1"))
@@ -230,4 +333,30 @@ struct UITests {
         }
     }
 
+    @Test
+    func imagePreviewLayoutDoesNotStretchWindow() async throws {
+        try await MainActor.run {
+            let fixture = try UIWindowFixture()
+            defer { fixture.cleanUp() }
+            try fixture.imagePreviewLayoutDoesNotStretchWindow()
+        }
+    }
+
+    @Test
+    func commandDeleteBehavior() async throws {
+        try await MainActor.run {
+            let fixture = try UIWindowFixture()
+            defer { fixture.cleanUp() }
+            try fixture.commandDeleteBehavior()
+        }
+    }
+
+    @Test
+    func mouseHoverAndSelectionStyle() async throws {
+        try await MainActor.run {
+            let fixture = try UIWindowFixture()
+            defer { fixture.cleanUp() }
+            try fixture.mouseHoverAndSelectionStyle()
+        }
+    }
 }

@@ -6,80 +6,37 @@ enum SensitiveMasker {
         let maskHandler: (String, NSTextCheckingResult) -> (NSRange, String)
     }
 
+    private static func tokenRule(pattern: String, prefixLen: Int, suffixLen: Int = 4) -> Rule? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        return Rule(pattern: regex) { fullText, match in
+            let matchedString = (fullText as NSString).substring(with: match.range)
+            return (match.range, maskMiddle(matchedString, prefixLen: prefixLen, suffixLen: suffixLen))
+        }
+    }
+
     private static let rules: [Rule] = {
-        var list: [Rule] = []
+        var list = [
+            tokenRule(pattern: "(gh[pousr]_[A-Za-z0-9_]{36,}|github_pat_[A-Za-z0-9_]{50,})", prefixLen: 4),
+            tokenRule(pattern: "sk-[A-Za-z0-9_\\-]{20,}", prefixLen: 3),
+            tokenRule(pattern: "\\b(AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\\b", prefixLen: 4),
+            tokenRule(pattern: "\\bxox[baprs]-[0-9a-zA-Z-]{12,}\\b", prefixLen: 5)
+        ].compactMap { $0 }
 
-        // 1. GitHub Tokens
-        if let regex = try? NSRegularExpression(
-            pattern: "(gh[pousr]_[A-Za-z0-9_]{36,}|github_pat_[A-Za-z0-9_]{50,})",
-            options: []
+        if let pemRegex = try? NSRegularExpression(
+            pattern: "-----[A-Z ]*BEGIN [A-Z0-9 ]*PRIVATE KEY-----([\\s\\S]*?)-----[A-Z ]*END [A-Z0-9 ]*PRIVATE KEY-----"
         ) {
-            list.append(Rule(pattern: regex) { fullText, match in
-                let matchedString = (fullText as NSString).substring(with: match.range)
-                let masked = maskMiddle(matchedString, prefixLen: 4, suffixLen: 4)
-                return (match.range, masked)
+            list.append(Rule(pattern: pemRegex) { _, match in
+                (match.range, "-----BEGIN PRIVATE KEY-----\n[•••••••• 敏感私钥内容已遮蔽 ••••••••]\n-----END PRIVATE KEY-----")
             })
         }
 
-        // 2. OpenAI / LLM API keys: sk-...
-        if let regex = try? NSRegularExpression(
-            pattern: "sk-[A-Za-z0-9_\\-]{20,}",
-            options: []
+        if let bearerRegex = try? NSRegularExpression(
+            pattern: "(?i)\\b(bearer\\s+)([A-Za-z0-9_\\-\\.]{25,})\\b"
         ) {
-            list.append(Rule(pattern: regex) { fullText, match in
-                let matchedString = (fullText as NSString).substring(with: match.range)
-                let masked = maskMiddle(matchedString, prefixLen: 3, suffixLen: 4)
-                return (match.range, masked)
-            })
-        }
-
-        // 3. AWS Access Key ID
-        if let regex = try? NSRegularExpression(
-            pattern: "\\b(AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\\b",
-            options: []
-        ) {
-            list.append(Rule(pattern: regex) { fullText, match in
-                let matchedString = (fullText as NSString).substring(with: match.range)
-                let masked = maskMiddle(matchedString, prefixLen: 4, suffixLen: 4)
-                return (match.range, masked)
-            })
-        }
-
-        // 4. PEM 私钥
-        if let regex = try? NSRegularExpression(
-            pattern: "-----[A-Z ]*BEGIN [A-Z0-9 ]*PRIVATE KEY-----([\\s\\S]*?)-----[A-Z ]*END [A-Z0-9 ]*PRIVATE KEY-----",
-            options: []
-        ) {
-            list.append(Rule(pattern: regex) { fullText, match in
-                let masked = "-----BEGIN PRIVATE KEY-----\n[•••••••• 敏感私钥内容已遮蔽 ••••••••]\n-----END PRIVATE KEY-----"
-                return (match.range, masked)
-            })
-        }
-
-        // 5. Slack Tokens
-        if let regex = try? NSRegularExpression(
-            pattern: "\\bxox[baprs]-[0-9a-zA-Z-]{12,}\\b",
-            options: []
-        ) {
-            list.append(Rule(pattern: regex) { fullText, match in
-                let matchedString = (fullText as NSString).substring(with: match.range)
-                let masked = maskMiddle(matchedString, prefixLen: 5, suffixLen: 4)
-                return (match.range, masked)
-            })
-        }
-
-        // 6. Generic Bearer Token
-        if let regex = try? NSRegularExpression(
-            pattern: "(?i)\\b(bearer\\s+)([A-Za-z0-9_\\-\\.]{25,})\\b",
-            options: []
-        ) {
-            list.append(Rule(pattern: regex) { fullText, match in
-                let prefixRange = match.range(at: 1)
-                let tokenRange = match.range(at: 2)
-                let prefix = (fullText as NSString).substring(with: prefixRange)
-                let token = (fullText as NSString).substring(with: tokenRange)
-                let masked = prefix + maskMiddle(token, prefixLen: 4, suffixLen: 4)
-                return (match.range, masked)
+            list.append(Rule(pattern: bearerRegex) { fullText, match in
+                let prefix = (fullText as NSString).substring(with: match.range(at: 1))
+                let token = (fullText as NSString).substring(with: match.range(at: 2))
+                return (match.range, prefix + maskMiddle(token, prefixLen: 4, suffixLen: 4))
             })
         }
 
@@ -97,14 +54,8 @@ enum SensitiveMasker {
 
     /// 判断文本是否包含敏感凭证
     static func isSensitive(_ text: String) -> Bool {
-        let nsString = text as NSString
-        let fullRange = NSRange(location: 0, length: nsString.length)
-        for rule in rules {
-            if rule.pattern.firstMatch(in: text, options: [], range: fullRange) != nil {
-                return true
-            }
-        }
-        return false
+        let fullRange = NSRange(location: 0, length: (text as NSString).length)
+        return rules.contains { $0.pattern.firstMatch(in: text, options: [], range: fullRange) != nil }
     }
 
     /// 对文本中的敏感凭证进行脱敏遮蔽

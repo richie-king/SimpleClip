@@ -94,14 +94,9 @@ enum PasteService {
                 }
                 return
             }
-            retryPaste(attemptsLeft: attemptsLeft)
-        }
-    }
-
-    private static func retryPaste(attemptsLeft: Int) {
-        guard attemptsLeft > 1 else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            pasteWhenCursorAvailable(attemptsLeft: attemptsLeft - 1)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                pasteWhenCursorAvailable(attemptsLeft: attemptsLeft - 1)
+            }
         }
     }
 
@@ -127,11 +122,7 @@ enum PasteService {
 
     /// 纯文本格式清理（去除多余首尾空白，合并超过两个连续换行）
     static func formatPlainText(_ text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let regex = try? NSRegularExpression(pattern: "\n{3,}", options: []) else {
-            return trimmed
-        }
-        let range = NSRange(location: 0, length: (trimmed as NSString).length)
-        return regex.stringByReplacingMatches(in: trimmed, options: [], range: range, withTemplate: "\n\n")
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
     }
 }

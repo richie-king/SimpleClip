@@ -8,61 +8,55 @@ enum WindowPositionMode: String, CaseIterable {
 }
 
 final class ShortcutPanel: NSPanel {
-    var focusSearch: (() -> Void)?
-    var dismiss: (() -> Void)?
-    var copySelection: (() -> Void)?
-    var selectKind: ((Int) -> Void)?
-    var openLink: (() -> Void)?
-    var revealFile: (() -> Void)?
-    var togglePin: (() -> Void)?
-    var deleteSelection: (() -> Void)?
-    var pastePlainText: (() -> Void)?
+    weak var controller: HistoryWindowController?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let shortcutModifiers = event.modifierFlags.intersection([
             .command, .option, .control, .shift
         ])
 
-        if shortcutModifiers == .command {
-            switch event.charactersIgnoringModifiers?.lowercased() {
+        if shortcutModifiers == .command, let key = event.charactersIgnoringModifiers?.lowercased() {
+            switch key {
             case "f":
-                focusSearch?()
+                controller?.focusSearch()
                 return true
             case "w":
-                dismiss?()
+                controller?.hide()
                 return true
             case "c":
-                copySelection?()
+                if controller?.isSearchFieldFocusedWithSelection == true {
+                    return false
+                }
+                controller?.copySelectedItem()
                 return true
-            case "1":
-                selectKind?(0)
-                return true
-            case "2":
-                selectKind?(1)
-                return true
-            case "3":
-                selectKind?(2)
-                return true
+            case "1", "2", "3":
+                if let num = Int(key) {
+                    controller?.selectKindFilter(num - 1)
+                    return true
+                }
             case "o":
-                openLink?()
+                controller?.openSelectedItemLink()
                 return true
             case "r":
-                revealFile?()
+                controller?.revealSelectedItemInFinder()
                 return true
             case "p":
-                togglePin?()
+                controller?.togglePinSelectedItem()
                 return true
             default:
                 break
             }
 
             if event.keyCode == 51 { // Command + Backspace
-                deleteSelection?()
+                if controller?.isSearchFieldFocusedWithText == true || controller?.isSearchFieldComposingText == true {
+                    return false
+                }
+                controller?.deleteSelectedItem()
                 return true
             }
         } else if shortcutModifiers == .option {
             if event.keyCode == 36 || event.keyCode == 76 { // Option + Enter
-                pastePlainText?()
+                controller?.pasteSelectedItem(plainText: true)
                 return true
             }
         }
@@ -71,7 +65,7 @@ final class ShortcutPanel: NSPanel {
     }
 
     override func cancelOperation(_ sender: Any?) {
-        dismiss?()
+        controller?.hide()
     }
 }
 
@@ -79,7 +73,32 @@ final class KeyboardTableView: NSTableView {
     var activateSelection: (() -> Void)?
     var pastePlainText: (() -> Void)?
     var deleteSelection: (() -> Void)?
-    var togglePin: (() -> Void)?
+
+    private var mouseTrackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let mouseTrackingArea {
+            removeTrackingArea(mouseTrackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        mouseTrackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard window?.isVisible == true else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let row = row(at: point)
+        if row >= 0 && row < numberOfRows && row != selectedRow {
+            selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 || event.keyCode == 76 { // Return / Enter
@@ -89,61 +108,61 @@ final class KeyboardTableView: NSTableView {
                 activateSelection?()
             }
         } else if event.keyCode == 53 { // Esc
-            (window as? ShortcutPanel)?.dismiss?()
+            (window as? ShortcutPanel)?.controller?.hide()
         } else if event.keyCode == 48 { // Tab
-            (window as? ShortcutPanel)?.focusSearch?()
-        } else if (event.keyCode == 51 && event.modifierFlags.contains(.command)) || event.keyCode == 117 {
+            (window as? ShortcutPanel)?.controller?.focusSearch()
+        } else if event.keyCode == 117 { // Forward Delete
             deleteSelection?()
-        } else if event.charactersIgnoringModifiers?.lowercased() == "p" && event.modifierFlags.contains(.command) {
-            togglePin?()
         } else {
             super.keyDown(with: event)
         }
     }
 }
 
-final class KeycapButton: NSButton {
-    private var trackingArea: NSTrackingArea?
+final class KeycapBadgeView: NSView {
+    let key: String
+    let tintColor: NSColor?
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        isBordered = false
-        wantsLayer = true
-        layer?.cornerRadius = 5
-        layer?.masksToBounds = true
-        layer?.borderWidth = 0.5
-        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.4).cgColor
-        layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.35).cgColor
-        font = .monospacedSystemFont(ofSize: 11, weight: .medium)
-        contentTintColor = .secondaryLabelColor
-        alignment = .center
+    private let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
+
+    init(key: String, tint: NSColor? = nil) {
+        self.key = key
+        self.tintColor = tint
+        super.init(frame: .zero)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect]
-        let area = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
-        addTrackingArea(area)
-        trackingArea = area
+    override var intrinsicContentSize: NSSize {
+        let size = (key as NSString).size(withAttributes: [.font: font])
+        let width = max(20.0, ceil(size.width) + 10.0)
+        return NSSize(width: width, height: 18.0)
     }
 
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .pointingHand)
-    }
+    override func draw(_ dirtyRect: NSRect) {
+        let bgPath = NSBezierPath(
+            roundedRect: bounds.insetBy(dx: 0.25, dy: 0.25),
+            xRadius: 4.5,
+            yRadius: 4.5
+        )
+        NSColor.controlBackgroundColor.withAlphaComponent(0.70).setFill()
+        bgPath.fill()
 
-    override func mouseEntered(with event: NSEvent) {
-        layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.6).cgColor
-    }
+        NSColor.separatorColor.withAlphaComponent(0.45).setStroke()
+        bgPath.lineWidth = 0.5
+        bgPath.stroke()
 
-    override func mouseExited(with event: NSEvent) {
-        layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.35).cgColor
+        let color = tintColor ?? NSColor.labelColor.withAlphaComponent(0.85)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: color
+        ]
+        let textSize = (key as NSString).size(withAttributes: attrs)
+        let x = round((bounds.width - textSize.width) / 2.0)
+        let y = round((bounds.height - textSize.height) / 2.0)
+        (key as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
     }
 }
 
@@ -161,7 +180,7 @@ final class HistoryWindowController: NSWindowController,
     private let store: HistoryStore
     private let searchField = NSSearchField()
     private let searchIcon = NSImageView()
-    private let closeButton = KeycapButton(title: "esc", target: nil, action: nil)
+    private let closeButton = NSButton(title: "esc", target: nil, action: nil)
     private let tableView = KeyboardTableView()
     private let countLabel = NSTextField(labelWithString: "")
     private let kindFilter = NSSegmentedControl(
@@ -180,6 +199,35 @@ final class HistoryWindowController: NSWindowController,
 
     private var filteredItems: [HistoryItem] = []
     private var previousApp: NSRunningApplication?
+    private var isDeletingSelectedItem = false
+
+    private var searchEditor: NSTextView? {
+        searchField.currentEditor() as? NSTextView
+    }
+
+    var isSearchFieldFocused: Bool {
+        searchEditor != nil || window?.firstResponder === searchField
+    }
+
+    var isSearchFieldFocusedWithText: Bool {
+        isSearchFieldFocused && !searchField.stringValue.isEmpty
+    }
+
+    var isSearchFieldFocusedWithSelection: Bool {
+        (searchEditor?.selectedRange().length ?? 0) > 0
+    }
+
+    var isSearchFieldComposingText: Bool {
+        searchEditor?.hasMarkedText() ?? false
+    }
+
+    func clearSearchField() {
+        searchField.stringValue = ""
+        if let editor = searchField.currentEditor() as? NSTextView {
+            editor.string = ""
+        }
+        refresh()
+    }
 
     /// 写回剪贴板后回调，用于让 `ClipboardMonitor` 跳过这次自己造成的变化。
     var onPasteboardWrite: ((Int) -> Void)?
@@ -219,19 +267,14 @@ final class HistoryWindowController: NSWindowController,
         restoreWindowFrame()
         refresh()
 
-        panel.focusSearch = { [weak self] in self?.focusSearch() }
-        panel.dismiss = { [weak self] in self?.hide() }
-        panel.copySelection = { [weak self] in self?.copySelectedItem() }
-        panel.selectKind = { [weak self] index in self?.selectKindFilter(index) }
-        panel.openLink = { [weak self] in self?.openSelectedItemLink() }
-        panel.revealFile = { [weak self] in self?.revealSelectedItemInFinder() }
-        panel.togglePin = { [weak self] in self?.togglePinSelectedItem() }
-        panel.deleteSelection = { [weak self] in self?.deleteSelectedItem() }
-        panel.pastePlainText = { [weak self] in self?.pasteSelectedItem(plainText: true) }
+        panel.controller = self
 
         previewView.onOpenLink = { [weak self] in self?.openSelectedItemLink() }
         previewView.onRevealInFinder = { [weak self] in self?.revealSelectedItemInFinder() }
-        store.onChange = { [weak self] in self?.refresh() }
+        store.onChange = { [weak self] in
+            guard let self, !self.isDeletingSelectedItem else { return }
+            self.refresh()
+        }
     }
 
     deinit {
@@ -267,8 +310,7 @@ final class HistoryWindowController: NSWindowController,
         saveWindowFrame()
         store.flushSync()
         window?.orderOut(nil)
-        searchField.stringValue = ""
-        refresh()
+        clearSearchField()
         previousApp?.activate()
     }
 
@@ -369,20 +411,18 @@ final class HistoryWindowController: NSWindowController,
         }
 
         let savedFrame = NSRectFromString(saved)
-        let frame = NSRect(
-            x: savedFrame.origin.x,
-            y: savedFrame.origin.y,
-            width: max(savedFrame.width, Self.minimumSize.width),
-            height: max(savedFrame.height, Self.minimumSize.height)
-        )
-        let isVisible = NSScreen.screens.contains {
-            $0.visibleFrame.intersects(frame)
-        }
-        if isVisible {
-            panel.setFrame(frame, display: false)
-        } else {
-            panel.center()
-        }
+        let screen = NSScreen.screens.first { $0.visibleFrame.intersects(savedFrame) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else { panel.center(); return }
+
+        let vis = screen.visibleFrame
+        let width = min(max(savedFrame.width, Self.minimumSize.width), vis.width - 40, 1200)
+        let height = min(max(savedFrame.height, Self.minimumSize.height), vis.height - 40, 800)
+        let x = max(vis.minX + 10, min(savedFrame.origin.x, vis.maxX - width - 10))
+        let y = max(vis.minY + 10, min(savedFrame.origin.y, vis.maxY - height - 10))
+
+        panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: false)
     }
 
     private func saveWindowFrame() {
@@ -409,7 +449,7 @@ final class HistoryWindowController: NSWindowController,
 
         searchField.placeholderString = "搜索剪贴板…"
         searchField.controlSize = .large
-        searchField.font = .systemFont(ofSize: 18, weight: .regular)
+        searchField.font = .systemFont(ofSize: 17, weight: .regular)
         searchField.isBordered = false
         searchField.drawsBackground = false
         searchField.focusRingType = .none
@@ -419,25 +459,38 @@ final class HistoryWindowController: NSWindowController,
         searchField.setAccessibilityLabel("搜索剪贴板历史")
 
         searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
-        searchIcon.symbolConfiguration = .init(pointSize: 18, weight: .regular)
+        searchIcon.symbolConfiguration = .init(pointSize: 17, weight: .medium)
         searchIcon.contentTintColor = .secondaryLabelColor
 
+        closeButton.bezelStyle = .inline
+        closeButton.controlSize = .small
+        closeButton.font = .monospacedSystemFont(ofSize: 10.5, weight: .semibold)
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "关闭")
+        closeButton.symbolConfiguration = .init(pointSize: 8, weight: .semibold)
+        closeButton.imagePosition = .imageLeading
         closeButton.target = self
         closeButton.action = #selector(closeHistory)
         closeButton.toolTip = "关闭历史窗口 (Esc)"
         closeButton.setAccessibilityLabel("关闭历史窗口")
+        closeButton.wantsLayer = true
+        closeButton.layer?.cornerRadius = 5.5
+        closeButton.layer?.masksToBounds = true
+        closeButton.layer?.borderWidth = 0.5
+        closeButton.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.45).cgColor
+        closeButton.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.7).cgColor
+        closeButton.contentTintColor = .secondaryLabelColor
 
         kindFilter.selectedSegment = 0
         kindFilter.segmentStyle = .capsule
         kindFilter.segmentDistribution = .fillEqually
         kindFilter.controlSize = .small
-        kindFilter.font = .systemFont(ofSize: 11, weight: .medium)
+        kindFilter.font = .systemFont(ofSize: 11.5, weight: .medium)
         kindFilter.target = self
         kindFilter.action = #selector(changeKindFilter)
         kindFilter.setAccessibilityLabel("记录类型")
 
-        countLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-        countLabel.textColor = .secondaryLabelColor
+        countLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        countLabel.textColor = .tertiaryLabelColor
         countLabel.alignment = .right
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("content"))
@@ -445,24 +498,28 @@ final class HistoryWindowController: NSWindowController,
         tableView.addTableColumn(column)
         tableView.headerView = nil
         tableView.style = .plain
-        tableView.rowHeight = 56
+        tableView.rowHeight = 58
         tableView.intercellSpacing = .zero
         tableView.backgroundColor = .clear
         tableView.selectionHighlightStyle = .regular
+        tableView.focusRingType = .none
         tableView.dataSource = self
         tableView.delegate = self
         tableView.target = self
+        tableView.action = #selector(tableViewClicked)
         tableView.doubleAction = #selector(activateSelectedItem)
         tableView.activateSelection = { [weak self] in self?.pasteSelectedItem(plainText: false) }
         tableView.pastePlainText = { [weak self] in self?.pasteSelectedItem(plainText: true) }
         tableView.deleteSelection = { [weak self] in self?.deleteSelectedItem() }
-        tableView.togglePin = { [weak self] in self?.togglePinSelectedItem() }
         tableView.setAccessibilityLabel("剪贴板历史记录")
 
         let scrollView = NSScrollView()
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets(top: 2, left: 0, bottom: 6, right: 0)
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
 
@@ -480,8 +537,9 @@ final class HistoryWindowController: NSWindowController,
 
         pasteButton.bezelStyle = .rounded
         pasteButton.controlSize = .small
-        pasteButton.font = .systemFont(ofSize: 11, weight: .medium)
+        pasteButton.font = .systemFont(ofSize: 11.5, weight: .semibold)
         pasteButton.image = NSImage(systemSymbolName: "return", accessibilityDescription: nil)
+        pasteButton.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
         pasteButton.imagePosition = .imageTrailing
         pasteButton.target = self
         pasteButton.action = #selector(activateSelectedItem)
@@ -492,23 +550,23 @@ final class HistoryWindowController: NSWindowController,
             shortcutHint("↑↓", "选择"),
             shortcutHint("⌘F", "搜索"),
             shortcutHint("⌘C", "复制"),
-            shortcutHint("⌘P", "置顶"),
+            shortcutHint("⌘P", "置顶", tint: .systemOrange),
             shortcutHint("⌘⌫", "删除")
         ])
         footer.orientation = .horizontal
-        footer.spacing = 12
+        footer.spacing = 14
+        footer.alignment = .centerY
 
         let brand = NSTextField(labelWithString: "ClipTiny")
-        brand.font = .systemFont(ofSize: 11, weight: .semibold)
-        brand.textColor = .secondaryLabelColor
+        brand.font = .systemFont(ofSize: 11.5, weight: .semibold)
+        brand.textColor = .tertiaryLabelColor
 
         let listRegion = NSLayoutGuide()
         surface.addLayoutGuide(listRegion)
 
-        let topDivider = NSBox()
-        let columnDivider = NSBox()
-        let bottomDivider = NSBox()
-        [topDivider, columnDivider, bottomDivider].forEach { $0.boxType = .separator }
+        let topDivider = makeDivider()
+        let columnDivider = makeDivider()
+        let bottomDivider = makeDivider()
 
         [searchIcon, searchField, closeButton, kindFilter, countLabel, scrollView, listEmptyState,
          previewView, pasteButton, footer, brand,
@@ -529,12 +587,13 @@ final class HistoryWindowController: NSWindowController,
 
             closeButton.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
             closeButton.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -22),
-            closeButton.widthAnchor.constraint(equalToConstant: 38),
+            closeButton.widthAnchor.constraint(equalToConstant: 48),
             closeButton.heightAnchor.constraint(equalToConstant: 22),
 
             topDivider.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 16),
             topDivider.leadingAnchor.constraint(equalTo: surface.leadingAnchor),
             topDivider.trailingAnchor.constraint(equalTo: surface.trailingAnchor),
+            topDivider.heightAnchor.constraint(equalToConstant: 1),
 
             listRegion.leadingAnchor.constraint(equalTo: surface.leadingAnchor),
             listRegion.topAnchor.constraint(equalTo: topDivider.bottomAnchor),
@@ -571,6 +630,7 @@ final class HistoryWindowController: NSWindowController,
             bottomDivider.bottomAnchor.constraint(equalTo: surface.bottomAnchor, constant: -42),
             bottomDivider.leadingAnchor.constraint(equalTo: surface.leadingAnchor),
             bottomDivider.trailingAnchor.constraint(equalTo: surface.trailingAnchor),
+            bottomDivider.heightAnchor.constraint(equalToConstant: 1),
 
             brand.leadingAnchor.constraint(equalTo: surface.leadingAnchor, constant: 24),
             brand.centerYAnchor.constraint(equalTo: surface.bottomAnchor, constant: -21),
@@ -583,16 +643,30 @@ final class HistoryWindowController: NSWindowController,
         ])
     }
 
+    private func makeDivider() -> NSBox {
+        let box = NSBox()
+        box.boxType = .custom
+        box.borderWidth = 0
+        box.fillColor = NSColor.separatorColor.withAlphaComponent(0.28)
+        return box
+    }
+
     @objc private func closeHistory() {
         hide()
     }
 
-    private func shortcutHint(_ key: String, _ title: String) -> NSView {
-        let keyBadge = KeycapBadgeView(key: key)
+    @objc private func tableViewClicked() {
+        focusSearch()
+    }
+
+    private func shortcutHint(_ key: String, _ title: String, tint: NSColor? = nil) -> NSView {
+        let keyBadge = KeycapBadgeView(key: key, tint: tint)
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 11)
+        titleLabel.font = .systemFont(ofSize: 11, weight: .medium)
         titleLabel.textColor = .secondaryLabelColor
+
         let stack = NSStackView(views: [keyBadge, titleLabel])
+        stack.orientation = .horizontal
         stack.spacing = 5
         stack.alignment = .centerY
         return stack
@@ -644,16 +718,7 @@ final class HistoryWindowController: NSWindowController,
         countLabel.stringValue = "\(filteredItems.count) 条"
         listEmptyState.isHidden = !filteredItems.isEmpty
 
-        if !query.isEmpty {
-            listEmptyIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
-            listEmptyTitle.stringValue = "没有找到相关记录"
-            listEmptyDetail.stringValue = "换个关键词，或试试其他类型"
-        } else {
-            listEmptyIcon.image = NSImage(systemSymbolName: "tray", accessibilityDescription: nil)
-            listEmptyTitle.stringValue = kindFilter.selectedSegment == 0
-                ? "还没有复制记录" : "暂无\(kindFilter.label(forSegment: kindFilter.selectedSegment) ?? "")记录"
-            listEmptyDetail.stringValue = "复制文本或图片后，会显示在这里"
-        }
+        updateEmptyStateContent(query: query)
         tableView.reloadData()
 
         if let selectedID,
@@ -667,8 +732,28 @@ final class HistoryWindowController: NSWindowController,
         updatePreview()
     }
 
-    private func focusSearch() {
+    private func updateEmptyStateContent(query: String) {
+        if !query.isEmpty {
+            listEmptyIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
+            listEmptyTitle.stringValue = "没有找到相关记录"
+            listEmptyDetail.stringValue = "换个关键词，或试试其他类型"
+        } else {
+            listEmptyIcon.image = NSImage(systemSymbolName: "tray", accessibilityDescription: nil)
+            listEmptyTitle.stringValue = kindFilter.selectedSegment == 0
+                ? "还没有复制记录" : "暂无\(kindFilter.label(forSegment: kindFilter.selectedSegment) ?? "")记录"
+            listEmptyDetail.stringValue = "复制文本或图片后，会显示在这里"
+        }
+    }
+
+    fileprivate func focusSearch() {
         window?.makeFirstResponder(searchField)
+    }
+
+    private func stepRow(by offset: Int) {
+        guard !filteredItems.isEmpty else { return }
+        let row = min(max(tableView.selectedRow + offset, 0), filteredItems.count - 1)
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        tableView.scrollRowToVisible(row)
     }
 
     func controlTextDidChange(_ obj: Notification) {
@@ -680,25 +765,14 @@ final class HistoryWindowController: NSWindowController,
     ) -> Bool {
         guard control === searchField, !textView.hasMarkedText() else { return false }
         switch NSStringFromSelector(commandSelector) {
-        case "moveDown:", "moveUp:":
-            guard !filteredItems.isEmpty else { return true }
-            let offset = NSStringFromSelector(commandSelector) == "moveDown:" ? 1 : -1
-            let row = min(max(tableView.selectedRow + offset, 0), filteredItems.count - 1)
-            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            tableView.scrollRowToVisible(row)
-            return true
+        case "moveDown:":
+            stepRow(by: 1); return true
+        case "moveUp:":
+            stepRow(by: -1); return true
         case "pageDown:":
-            guard !filteredItems.isEmpty else { return true }
-            let row = min(max(tableView.selectedRow + 6, 0), filteredItems.count - 1)
-            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            tableView.scrollRowToVisible(row)
-            return true
+            stepRow(by: 6); return true
         case "pageUp:":
-            guard !filteredItems.isEmpty else { return true }
-            let row = min(max(tableView.selectedRow - 6, 0), filteredItems.count - 1)
-            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            tableView.scrollRowToVisible(row)
-            return true
+            stepRow(by: -6); return true
         case "insertNewline:":
             if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
                 pasteSelectedItem(plainText: true)
@@ -706,16 +780,21 @@ final class HistoryWindowController: NSWindowController,
                 pasteSelectedItem(plainText: false)
             }
             return true
+        case "deleteToBeginningOfLine:", "deleteToBeginningOfParagraph:":
+            guard !searchField.stringValue.isEmpty else { return false }
+            clearSearchField()
+            return true
         case "deleteBackward:":
-            if NSApp.currentEvent?.modifierFlags.contains(.command) == true {
+            guard NSApp.currentEvent?.modifierFlags.contains(.command) == true else { return false }
+            if !searchField.stringValue.isEmpty {
+                clearSearchField()
+            } else {
                 deleteSelectedItem()
-                return true
             }
-            return false
+            return true
         case "cancelOperation:":
             if !searchField.stringValue.isEmpty {
-                searchField.stringValue = ""
-                refresh()
+                clearSearchField()
             } else {
                 hide()
             }
@@ -735,7 +814,7 @@ final class HistoryWindowController: NSWindowController,
         refresh()
     }
 
-    private func selectKindFilter(_ index: Int) {
+    fileprivate func selectKindFilter(_ index: Int) {
         guard index >= 0 && index < kindFilter.segmentCount else { return }
         kindFilter.selectedSegment = index
         refresh()
@@ -796,17 +875,21 @@ final class HistoryWindowController: NSWindowController,
         pasteSelectedItem(plainText: false)
     }
 
-    private func copySelectedItem() {
+    fileprivate func copySelectedItem() {
         let row = tableView.selectedRow
         guard filteredItems.indices.contains(row) else { return }
         guard writeToPasteboard(filteredItems[row], plainText: false) else { return }
         hide()
     }
 
-    private func deleteSelectedItem() {
+    fileprivate func deleteSelectedItem() {
         let row = tableView.selectedRow
         guard filteredItems.indices.contains(row) else { return }
         let item = filteredItems[row]
+
+        isDeletingSelectedItem = true
+        defer { isDeletingSelectedItem = false }
+
         store.delete(id: item.id)
 
         filteredItems.remove(at: row)
@@ -819,11 +902,13 @@ final class HistoryWindowController: NSWindowController,
             tableView.deselectAll(nil)
         }
         countLabel.stringValue = "\(filteredItems.count) 条"
+        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        updateEmptyStateContent(query: query)
         listEmptyState.isHidden = !filteredItems.isEmpty
         updatePreview()
     }
 
-    private func togglePinSelectedItem() {
+    fileprivate func togglePinSelectedItem() {
         let row = tableView.selectedRow
         guard filteredItems.indices.contains(row) else { return }
         let item = filteredItems[row]
@@ -831,7 +916,7 @@ final class HistoryWindowController: NSWindowController,
         refresh()
     }
 
-    @objc private func openSelectedItemLink() {
+    @objc fileprivate func openSelectedItemLink() {
         let row = tableView.selectedRow
         guard filteredItems.indices.contains(row) else { return }
         let trimmed = filteredItems[row].text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -841,7 +926,7 @@ final class HistoryWindowController: NSWindowController,
         }
     }
 
-    @objc private func revealSelectedItemInFinder() {
+    @objc fileprivate func revealSelectedItemInFinder() {
         let row = tableView.selectedRow
         guard filteredItems.indices.contains(row) else { return }
         let item = filteredItems[row]
@@ -851,7 +936,7 @@ final class HistoryWindowController: NSWindowController,
         }
     }
 
-    private func pasteSelectedItem(plainText: Bool = false) {
+    fileprivate func pasteSelectedItem(plainText: Bool = false) {
         let row = tableView.selectedRow
         guard filteredItems.indices.contains(row) else { return }
         guard writeToPasteboard(filteredItems[row], plainText: plainText) else { return }

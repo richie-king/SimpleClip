@@ -26,7 +26,7 @@ enum KeychainKeyStore {
             return SymmetricKey(data: data)
         }
         guard lookupStatus == errSecItemNotFound else {
-            throw KeychainError(status: lookupStatus)
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(lookupStatus))
         }
 
         let key = SymmetricKey(size: .bits256)
@@ -40,19 +40,8 @@ enum KeychainKeyStore {
         ]
         let insertStatus = SecItemAdd(insert as CFDictionary, nil)
         guard insertStatus == errSecSuccess else {
-            throw KeychainError(status: insertStatus)
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(insertStatus))
         }
         return key
-    }
-}
-
-private struct KeychainError: LocalizedError {
-    let status: OSStatus
-
-    var errorDescription: String? {
-        if let message = SecCopyErrorMessageString(status, nil) {
-            return "钥匙串错误 \(status)：\(message)"
-        }
-        return "钥匙串错误：\(status)"
     }
 }

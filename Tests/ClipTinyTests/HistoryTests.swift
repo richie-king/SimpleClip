@@ -301,8 +301,8 @@ final class HistoryTests {
     @Test
     func testPinyinSearchAndMultiWordAndMatching() {
         let text1 = "网址导航与剪贴板管理器"
-        #expect(PinyinHelper.pinyinInitials(for: "网址") == "wz")
-        #expect(PinyinHelper.pinyinFull(for: "网址") == "wangzhi")
+        #expect(PinyinHelper.pinyinData(for: "网址")?.initials == "wz")
+        #expect(PinyinHelper.pinyinData(for: "网址")?.full == "wangzhi")
 
         // 拼音首字母匹配
         #expect(PinyinHelper.queryMatches("wz", text: text1))

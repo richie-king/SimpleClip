@@ -38,7 +38,6 @@ final class ClipboardMonitor {
 
     deinit {
         stop()
-        notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
         notificationObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
     }
 
@@ -46,42 +45,17 @@ final class ClipboardMonitor {
         guard pasteboard == .general else { return }
 
         let wsCenter = NSWorkspace.shared.notificationCenter
-
-        // 监听屏幕休眠与唤醒
-        let sleepObs1 = wsCenter.addObserver(
-            forName: NSWorkspace.screensDidSleepNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.pauseForSleep()
+        let eventHandlers: [([Notification.Name], () -> Void)] = [
+            ([NSWorkspace.screensDidSleepNotification, NSWorkspace.willSleepNotification], { [weak self] in self?.pauseForSleep() }),
+            ([NSWorkspace.screensDidWakeNotification, NSWorkspace.didWakeNotification], { [weak self] in self?.resumeFromSleep() })
+        ]
+        for (events, handler) in eventHandlers {
+            for name in events {
+                notificationObservers.append(
+                    wsCenter.addObserver(forName: name, object: nil, queue: .main) { _ in handler() }
+                )
+            }
         }
-
-        let wakeObs1 = wsCenter.addObserver(
-            forName: NSWorkspace.screensDidWakeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.resumeFromSleep()
-        }
-
-        // 监听系统休眠与唤醒
-        let sleepObs2 = wsCenter.addObserver(
-            forName: NSWorkspace.willSleepNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.pauseForSleep()
-        }
-
-        let wakeObs2 = wsCenter.addObserver(
-            forName: NSWorkspace.didWakeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.resumeFromSleep()
-        }
-
-        notificationObservers.append(contentsOf: [sleepObs1, wakeObs1, sleepObs2, wakeObs2])
     }
 
     func start() {
@@ -145,13 +119,7 @@ final class ClipboardMonitor {
             .combinedSessionState,
             eventType: anyEvent
         )
-        if idleSeconds < 60 {
-            return (0.35, 0.12)
-        } else if idleSeconds < 300 {
-            return (1.0, 0.3)
-        } else {
-            return (2.0, 0.5)
-        }
+        return idleSeconds < 60 ? (0.35, 0.12) : idleSeconds < 300 ? (1.0, 0.3) : (2.0, 0.5)
     }
 
     /// ClipTiny 自己写回剪贴板时调用，避免把刚粘贴的内容再记一遍。
@@ -181,7 +149,7 @@ final class ClipboardMonitor {
         // 1. 优先检查图片
         if ClipboardImage.prefersImage(in: pasteboard) {
             if asyncProcessing {
-                guard let (_, rawData) = ClipboardImage.rawImageData(from: pasteboard) else { return }
+                guard let rawData = ClipboardImage.rawImageData(from: pasteboard) else { return }
                 DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                     guard let capture = ClipboardImage.capture(from: rawData) else { return }
                     DispatchQueue.main.async {

@@ -10,29 +10,29 @@ final class ColorPreviewCardView: NSView {
 
         swatchBox.boxType = .custom
         swatchBox.titlePosition = .noTitle
-        swatchBox.cornerRadius = 10
+        swatchBox.cornerRadius = 12
         swatchBox.borderWidth = 0.5
-        swatchBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.4)
+        swatchBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.45)
         swatchBox.contentViewMargins = .zero
 
-        hexLabel.font = .monospacedSystemFont(ofSize: 18, weight: .semibold)
+        hexLabel.font = .monospacedSystemFont(ofSize: 20, weight: .bold)
         hexLabel.textColor = .labelColor
         hexLabel.isSelectable = true
 
-        rgbLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        rgbLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
         rgbLabel.textColor = .secondaryLabelColor
         rgbLabel.isSelectable = true
 
         let stack = NSStackView(views: [swatchBox, hexLabel, rgbLabel])
         stack.orientation = .vertical
         stack.alignment = .centerX
-        stack.spacing = 14
+        stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
         NSLayoutConstraint.activate([
             swatchBox.widthAnchor.constraint(equalToConstant: 180),
-            swatchBox.heightAnchor.constraint(equalToConstant: 90),
+            swatchBox.heightAnchor.constraint(equalToConstant: 95),
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
@@ -72,8 +72,8 @@ final class FilePreviewCardView: NSView {
         pathLabel.alignment = .center
         pathLabel.isSelectable = true
 
-        sizeLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        sizeLabel.textColor = .secondaryLabelColor
+        sizeLabel.font = .monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
+        sizeLabel.textColor = .tertiaryLabelColor
         sizeLabel.alignment = .center
 
         let stack = NSStackView(views: [iconView, nameLabel, pathLabel, sizeLabel])
@@ -200,10 +200,10 @@ final class HistoryPreviewCardView: NSView {
         // 2. 预览主体 Box
         previewBox.boxType = .custom
         previewBox.titlePosition = .noTitle
-        previewBox.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.35)
-        previewBox.cornerRadius = 10
+        previewBox.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.38)
+        previewBox.cornerRadius = 12
         previewBox.borderWidth = 0.5
-        previewBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.35)
+        previewBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.28)
         previewBox.contentViewMargins = .zero
 
         previewImageView.imageScaling = .scaleProportionallyDown
@@ -211,17 +211,19 @@ final class HistoryPreviewCardView: NSView {
         previewImageView.wantsLayer = true
         previewImageView.layer?.cornerRadius = 8
         previewImageView.layer?.masksToBounds = true
-        previewImageView.layer?.borderWidth = 0.5
-        previewImageView.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.3).cgColor
+        previewImageView.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(50), for: .horizontal)
+        previewImageView.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(50), for: .vertical)
+        previewImageView.setContentHuggingPriority(NSLayoutConstraint.Priority(50), for: .horizontal)
+        previewImageView.setContentHuggingPriority(NSLayoutConstraint.Priority(50), for: .vertical)
 
         previewTextView.isEditable = false
         previewTextView.isSelectable = true
         previewTextView.drawsBackground = false
         previewTextView.textColor = .textColor
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 4
+        paragraph.lineSpacing = 5
         previewTextView.defaultParagraphStyle = paragraph
-        previewTextView.textContainerInset = NSSize(width: 6, height: 6)
+        previewTextView.textContainerInset = NSSize(width: 14, height: 14)
         previewTextView.isVerticallyResizable = true
         previewTextView.isHorizontallyResizable = false
         previewTextView.autoresizingMask = [.width]
@@ -230,14 +232,15 @@ final class HistoryPreviewCardView: NSView {
         previewTextScrollView.documentView = previewTextView
         previewTextScrollView.hasVerticalScroller = true
         previewTextScrollView.autohidesScrollers = true
+        previewTextScrollView.scrollerStyle = .overlay
         previewTextScrollView.drawsBackground = false
         previewTextScrollView.borderType = .noBorder
 
-        previewInfoLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-        previewInfoLabel.textColor = .secondaryLabelColor
+        previewInfoLabel.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
+        previewInfoLabel.textColor = .tertiaryLabelColor
         previewInfoLabel.lineBreakMode = .byTruncatingTail
 
-        previewDetailLabel.font = .systemFont(ofSize: 10)
+        previewDetailLabel.font = .systemFont(ofSize: 10.5, weight: .medium)
         previewDetailLabel.textColor = .secondaryLabelColor
         previewDetailLabel.alignment = .right
         previewDetailLabel.lineBreakMode = .byTruncatingTail
@@ -261,7 +264,10 @@ final class HistoryPreviewCardView: NSView {
         [emptyIcon, emptyTitle, emptyDetail].forEach { previewPlaceholder.addArrangedSubview($0) }
 
         let metadataDivider = NSBox()
-        metadataDivider.boxType = .separator
+        metadataDivider.boxType = .custom
+        metadataDivider.borderWidth = 0
+        metadataDivider.fillColor = NSColor.separatorColor.withAlphaComponent(0.25)
+        metadataDivider.contentViewMargins = .zero
 
         guard let container = previewBox.contentView else { return }
         [previewImageView, previewTextScrollView, previewColorCard, previewFileCard, previewPlaceholder,
@@ -289,17 +295,18 @@ final class HistoryPreviewCardView: NSView {
             previewBox.trailingAnchor.constraint(equalTo: trailingAnchor),
             previewBox.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            previewInfoLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            previewInfoLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
             previewInfoLabel.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
             previewInfoLabel.heightAnchor.constraint(equalToConstant: 14),
 
-            previewDetailLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            previewDetailLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
             previewDetailLabel.centerYAnchor.constraint(equalTo: previewInfoLabel.centerYAnchor),
             previewDetailLabel.leadingAnchor.constraint(greaterThanOrEqualTo: previewInfoLabel.trailingAnchor, constant: 8),
 
             metadataDivider.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
             metadataDivider.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
             metadataDivider.bottomAnchor.constraint(equalTo: previewInfoLabel.topAnchor, constant: -8),
+            metadataDivider.heightAnchor.constraint(equalToConstant: 1),
 
             previewPlaceholder.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             previewPlaceholder.centerYAnchor.constraint(equalTo: container.centerYAnchor, constant: -10),
@@ -319,10 +326,10 @@ final class HistoryPreviewCardView: NSView {
             previewImageView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
             previewImageView.bottomAnchor.constraint(equalTo: metadataDivider.topAnchor, constant: -8),
 
-            previewTextScrollView.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
-            previewTextScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
-            previewTextScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
-            previewTextScrollView.bottomAnchor.constraint(equalTo: metadataDivider.topAnchor, constant: -8)
+            previewTextScrollView.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
+            previewTextScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 4),
+            previewTextScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -4),
+            previewTextScrollView.bottomAnchor.constraint(equalTo: metadataDivider.topAnchor, constant: -6)
         ])
     }
 
@@ -353,15 +360,8 @@ final class HistoryPreviewCardView: NSView {
     func showEmptyState() {
         currentItem = nil
         isMaskingDisabled = false
+        hideAllContentCards()
         previewPlaceholder.isHidden = false
-        previewImageView.isHidden = true
-        previewImageView.image = nil
-        previewTextScrollView.isHidden = true
-        previewColorCard.isHidden = true
-        previewFileCard.isHidden = true
-        openLinkButton.isHidden = true
-        revealFileButton.isHidden = true
-        maskToggleButton.isHidden = true
 
         previewTypeIcon.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)
         previewTitle.stringValue = "内容预览"
@@ -381,10 +381,10 @@ final class HistoryPreviewCardView: NSView {
         previewInfoLabel.stringValue = item.preciseTimestamp
         previewInfoLabel.toolTip = "复制时间：\(item.preciseTimestamp)"
 
+        hideAllContentCards()
         let kind = detectContentKind(item: item)
         switch kind {
         case .image:
-            hideAllContentCards()
             previewImageView.isHidden = false
 
             previewTypeIcon.image = NSImage(systemSymbolName: "photo", accessibilityDescription: nil)
@@ -400,7 +400,6 @@ final class HistoryPreviewCardView: NSView {
             }
 
         case .file(let url, let isDirectory):
-            hideAllContentCards()
             previewFileCard.isHidden = false
             revealFileButton.isHidden = false
 
@@ -412,7 +411,6 @@ final class HistoryPreviewCardView: NSView {
             previewFileCard.configure(url: url, sizeSummary: item.sizeSummary, isDirectory: isDirectory)
 
         case .color(let hex, let color):
-            hideAllContentCards()
             previewColorCard.isHidden = false
 
             previewTypeIcon.image = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: nil)
@@ -423,7 +421,6 @@ final class HistoryPreviewCardView: NSView {
             previewColorCard.configure(hex: hex, color: color)
 
         case .link(let url):
-            hideAllContentCards()
             previewTextScrollView.isHidden = false
             openLinkButton.isHidden = false
 
@@ -437,7 +434,6 @@ final class HistoryPreviewCardView: NSView {
             updateTextContent()
 
         case .code(let lineCount):
-            hideAllContentCards()
             previewTextScrollView.isHidden = false
 
             let isSensitive = SensitiveMasker.isSensitive(item.text)
@@ -453,7 +449,6 @@ final class HistoryPreviewCardView: NSView {
             updateTextContent()
 
         case .text:
-            hideAllContentCards()
             previewTextScrollView.isHidden = false
 
             let isSensitive = SensitiveMasker.isSensitive(item.text)
@@ -494,15 +489,8 @@ final class HistoryPreviewCardView: NSView {
         previewTextView.scroll(.zero)
     }
 
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter
-    }()
-
     private func relativeDate(_ date: Date) -> String {
-        let now = Date()
-        guard now.timeIntervalSince(date) >= 60 else { return "刚刚" }
-        return Self.relativeFormatter.localizedString(for: date, relativeTo: now)
+        guard Date().timeIntervalSince(date) >= 60 else { return "刚刚" }
+        return date.formatted(.relative(presentation: .named))
     }
 }
